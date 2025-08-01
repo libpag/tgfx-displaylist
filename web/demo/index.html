@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- Basic meta info -->
+    <meta charset="UTF-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no"/>
+    <meta name="full-screen" content="true"/>
+    <meta name="description" content="tgfx-Displaylist"/>
+    <title>tgfx-Displaylist</title>
+    
+    <!-- CSS files -->
+    <link rel="stylesheet" href="./src/static/css/layout.css">
+    <link rel="stylesheet" href="./src/static/css/sidebar.css">
+    <link rel="stylesheet" href="./src/static/css/zoom-widget.css">
+
+    <!-- Icons and fonts -->
+    <link rel="icon" href="static/icon/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+</head>
+<body>
+<div class="page-content">
+    <!-- Sidebar section -->
+    <div id="sidebar" class="sidebar">
+        <!-- File selection -->
+        <div class="section file-section">
+            <div class="section-title">
+                Select File
+                <div class="dropdown" style="margin-left:16px;">
+                    <div class="dropdown-display" id="fileSelectDisplay">
+                        <span>File 1</span>
+                        <span class="dropdown-arrow">&#9660;</span>
+                    </div>
+                    <div class="dropdown-menu" id="fileSelectMenu">
+                        <div class="dropdown-option" data-value="file1">File 1</div>
+                        <div class="dropdown-option" data-value="file2">File 2</div>
+                        <div class="dropdown-option" data-value="file3">File 3</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <hr class="divider">
+
+        <!-- Render mode selection -->
+        <div class="section render-mode-section">
+            <div class="section-title">Render Mode</div>
+            <div class="radio-group">
+                <label class="option-label">
+                    <input type="radio" class="custom-radio" name="renderMode" value="direct" checked>
+                    <span class="radio-label">Direct</span>
+                </label>
+                <label class="option-label">
+                    <input type="radio" class="custom-radio" name="renderMode" value="partial">
+                    <span class="radio-label">Partial</span>
+                </label>
+                <label class="option-label">
+                    <input type="radio" class="custom-radio" name="renderMode" value="tile">
+                    <span class="radio-label">Tile</span>
+                </label>
+            </div>
+            
+            <!-- Tile options (hidden by default) -->
+            <div id="tileOptions" class="tile-options" style="display:none;">
+                <div class="tile-options-title">Tile Options</div>
+                
+                <!-- Tile size selection -->
+                <div class="input-group">
+                    <label for="tileSizeSelect" class="input-label">Tile Size</label>
+                    <div class="dropdown">
+                        <div class="dropdown-display" id="tileSizeDisplay">
+                            <span>256x256</span>
+                            <span class="dropdown-arrow">&#9660;</span>
+                        </div>
+                        <div class="dropdown-menu" id="tileSizeMenu">
+                            <div class="dropdown-option" data-value="64">64x64</div>
+                            <div class="dropdown-option" data-value="128">128x128</div>
+                            <div class="dropdown-option" data-value="256">256x256</div>
+                            <div class="dropdown-option" data-value="512">512x512</div>
+                            <div class="dropdown-option" data-value="1048">1024x1024</div>
+                            <div class="dropdown-option" data-value="1048">2048x2048</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Max tile count -->
+                <div class="input-group">
+                    <label for="maxTileCount" class="input-label">Max Tiles</label>
+                    <input type="number" id="maxTileCount" min="1" max="100" value="32" class="input-number">
+                </div>
+                
+                <!-- Blur option -->
+                <div class="input-group input-group-blur">
+                    <label class="checkbox-label" for="allowBlur" style="margin-right:0;">
+                        <input type="checkbox" id="allowBlur" class="custom-checkbox">
+                        Allow Blur
+                    </label>
+                </div>
+                
+                <!-- Max updates per frame -->
+                <div class="input-group">
+                    <label for="maxUpdatePerFrame" class="input-label">Max Updates/Frame</label>
+                    <input type="number" id="maxUpdatePerFrame" min="1" max="100" value="5" class="input-number">
+                </div>
+            </div>
+        </div>
+        <hr class="divider">
+
+        <!-- Dirty rect options -->
+        <div class="section dirty-rect-section">
+            <div class="section-title">
+                <span style="display:flex;align-items:center;">
+                    <input type="checkbox" id="showDirtyRect" class="custom-checkbox">
+                    <span class="section-title">Show Dirty Rects</span>
+                </span>
+            </div>
+        </div>
+        <hr class="divider">
+    </div>
+    
+    <!-- Canvas area -->
+    <div id="container" class="container">
+        <canvas class="canvas" id="benchmark" width="800" height="600"></canvas>
+    </div>
+</div>
+
+<!-- Zoom widget -->
+<div class="zoom-widget" id="zoomWidget">
+    <div class="zoom-display" id="zoomDisplay">
+        <span id="zoomValue">100%</span>
+        <span class="zoom-arrow">&#9650;</span>
+    </div>
+    <div class="zoom-dropdown" id="zoomDropdown">
+        <div class="zoom-input-row">
+            <input type="number" id="zoomInput" class="zoom-input" min="1" max="2000" step="1" value="100">%
+        </div>
+        <div class="zoom-option" data-zoom="in">Zoom In</div>
+        <div class="zoom-option" data-zoom="out">Zoom Out</div>
+        <div class="zoom-option" data-zoom="fit">Fit View</div>
+        <div class="zoom-option" data-zoom="50">50%</div>
+        <div class="zoom-option" data-zoom="100">100%</div>
+        <div class="zoom-option" data-zoom="200">200%</div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        // Initialize dropdown components
+        function initDropdown(displayId, menuId) {
+            const display = document.getElementById(displayId);
+            const menu = document.getElementById(menuId);
+            
+            display.addEventListener('click', function(e) {
+                e.stopPropagation();
+                menu.classList.toggle('show');
+            });
+            
+            menu.querySelectorAll('.dropdown-option').forEach(option => {
+                option.addEventListener('click', function() {
+                    const value = this.getAttribute('data-value');
+                    const text = this.textContent;
+                    display.querySelector('span:first-child').textContent = text;
+                    menu.classList.remove('show');
+                    
+                    const event = new Event('change');
+                    document.dispatchEvent(event);
+                });
+            });
+            
+            document.addEventListener('click', function() {
+                menu.classList.remove('show');
+            });
+        }
+        
+        initDropdown('fileSelectDisplay', 'fileSelectMenu');
+        initDropdown('tileSizeDisplay', 'tileSizeMenu');
+
+        // Handle render mode changes
+        const radios = document.querySelectorAll('input[name="renderMode"]');
+        const tileOptions = document.getElementById('tileOptions');
+        
+        function updateTileOptions() {
+            const checked = document.querySelector('input[name="renderMode"]:checked');
+            tileOptions.style.display = checked && checked.value === 'tile' ? '' : 'none';
+        }
+        
+        radios.forEach(radio => {
+            radio.addEventListener('change', updateTileOptions);
+        });
+        
+        updateTileOptions();
+
+        // Zoom control logic
+        const zoomWidget = document.getElementById('zoomWidget');
+        const zoomDisplay = document.getElementById('zoomDisplay');
+        const zoomDropdown = document.getElementById('zoomDropdown');
+        const zoomValue = document.getElementById('zoomValue');
+        const zoomInput = document.getElementById('zoomInput');
+        let currentZoom = 100;
+
+        function setZoom(val) {
+            val = Math.max(1, Math.min(2000, Math.round(val)));
+            currentZoom = val;
+            zoomValue.textContent = val + '%';
+            zoomInput.value = val;
+        }
+
+        function validateInput(input, min, max) {
+            input.addEventListener('change', function() {
+                let value = parseInt(this.value);
+                if (isNaN(value)) value = min;
+                this.value = Math.max(min, Math.min(max, value));
+            });
+        }
+
+        validateInput(document.getElementById('maxTileCount'), 1, 100);
+        validateInput(document.getElementById('maxUpdatePerFrame'), 1, 100);
+        validateInput(document.getElementById('zoomInput'), 1, 2000);
+
+        zoomDisplay.addEventListener('click', function (e) {
+            zoomDropdown.classList.toggle('show');
+        });
+
+        document.addEventListener('mousedown', function(e) {
+            if (!zoomWidget.contains(e.target)) {
+                zoomDropdown.classList.remove('show');
+            }
+        });
+
+        zoomDropdown.querySelectorAll('.zoom-option[data-zoom]').forEach(opt => {
+            opt.addEventListener('click', function() {
+                const type = this.getAttribute('data-zoom');
+                if (type === 'in') setZoom(currentZoom + 10);
+                else if (type === 'out') setZoom(currentZoom - 10);
+                else if (type === 'fit') setZoom(100);
+                else setZoom(Number(type));
+                zoomDropdown.classList.remove('show');
+            });
+        });
+
+        zoomInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                setZoom(zoomInput.value);
+                zoomDropdown.classList.remove('show');
+            }
+        });
+
+        setZoom(100);
+    });
+</script>
+</body>
+</html>
