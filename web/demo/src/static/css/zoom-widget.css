@@ -12,41 +12,45 @@
     color: #fff;
     padding: 4px 8px;
     user-select: none;
-   }
-   
-   .zoom-widget .zoom-display {
+}
+
+.zoom-widget .zoom-display {
     display: flex;
     align-items: center;
     cursor: pointer;
     justify-content: space-between;
-   }
-   
-   .zoom-widget .zoom-arrow {
+    height: 28px; 
+}
+
+.zoom-widget .zoom-arrow {
     margin-left: 6px;
     font-size: 10px;
-   }
-   
-   .zoom-dropdown {
+}
+
+.zoom-dropdown {
     display: none;
     position: absolute;
     bottom: 30px;
     right: 0;
-    background: #16161D;
+    background: #2c2c2c;
     border: 1px solid #505050;
-    border-radius: 8px;
+    border-radius: 4px;
     min-width: 110px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     padding: 4px 0;
     z-index: 10000;
-   }
-   
-   .zoom-dropdown.show {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+}
+
+.zoom-dropdown.show {
     display: block;
-   }
-   
-   .zoom-dropdown .zoom-option,
-   .zoom-dropdown .zoom-input-row {
-    padding: 4px 12px;
+}
+
+.zoom-dropdown .zoom-option,
+.zoom-dropdown .zoom-input-row {
+    padding: 6px 12px; 
     cursor: pointer;
     color: #fff;
     background: none;
@@ -56,31 +60,46 @@
     outline: none;
     font-size: 12px;
     box-sizing: border-box;
-   }
-   
-   .zoom-dropdown .zoom-option:hover {
-    background: #23232c;
-   }
-   
-   .zoom-dropdown .zoom-input-row {
+    height: 28px;
+    display: flex;
+    align-items: center;
+}
+
+.zoom-dropdown .zoom-option:hover {
+    background: #0078d7;
+    border-radius: 4px;
+    margin: 0 2px;
+    height: 26px; 
+    line-height: 26px; 
+    width: calc(100% - 4px);
+}
+
+.zoom-dropdown .zoom-input-row {
     display: flex;
     align-items: center;
     gap: 4px;
     cursor: default;
-   }
-   
-   .zoom-dropdown .zoom-input-row:hover {
+}
+
+.zoom-dropdown .zoom-input-row:hover {
     background: none;
-   }
-   
-   .zoom-dropdown .zoom-input {
+}
+
+.zoom-dropdown .zoom-input {
     width: 44px;
+    height: 24px;
     border: 1px solid #505050;
-    background: #23232c;
+    background: #2c2c2c; 
     color: #fff;
     border-radius: 4px;
     padding: 2px 4px;
     font-size: 12px;
     text-align: right;
-   }
-   
+    -moz-appearance: textfield;
+}
+
+.zoom-dropdown .zoom-input::-webkit-outer-spin-button,
+.zoom-dropdown .zoom-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
