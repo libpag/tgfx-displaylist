@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no"/>
+    <meta name="full-screen" content="true"/>
+    <meta name="description" content="tgfx-Displaylist"/>
+    <title>tgfx-Displaylist</title>
+    
+    <link rel="stylesheet" href="./src/static/css/layout.css">
+    <link rel="stylesheet" href="./src/static/css/sidebar.css">
+    <link rel="stylesheet" href="./src/static/css/zoom-widget.css">
+    <link rel="icon" href="static/icon/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+</head>
+<body>
+<div class="page-content">
+    <div id="sidebar" class="sidebar">
+        
+        <div class="section file-section">
+            <div class="section-title">
+                <span data-translate="selectFile">Select File</span>
+                <div class="dropdown">
+                    <select id="fileSelect">
+                        <option value="file1">File 1</option>
+                        <option value="file2">File 2</option>
+                        <option value="file3">File 3</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        <hr class="divider">
+
+        <div class="section render-mode-section">
+            <div class="input-group">
+                <label for="renderModeSelect" class="input-label" data-translate="renderMode">Render Mode</label>
+                <div class="dropdown">
+                    <select id="renderModeSelect">
+                        <option value="direct" data-translate="direct">Direct</option>
+                        <option value="partial" data-translate="partial">Partial</option>
+                        <option value="tile" data-translate="tile">Tile</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div id="tileOptions" class="tile-options hidden">
+                <div class="tile-options-title" data-translate="tileOptions">Tile Options</div>
+                
+                <div class="input-group">
+                    <label for="tileSizeSelect" class="input-label" data-translate="tileSize">Tile Size</label>
+                    <div class="dropdown">
+                        <select id="tileSizeSelect">
+                            <option value="64">64x64</option>
+                            <option value="128">128x128</option>
+                            <option value="256">256x256</option>
+                            <option value="512">512x512</option>
+                            <option value="1024">1024x1024</option>
+                            <option value="2048">2048x2048</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="input-group">
+                    <label for="maxTileCount" class="input-label" data-translate="maxTiles">Max Tiles</label>
+                    <input type="number" id="maxTileCount" min="1" max="100" value="32" class="input-number">
+                </div>
+                
+                <div class="input-group">
+                    <label for="allowBlur" class="input-label" data-translate="allowBlur">Allow Blur</label>
+                    <div class="dropdown">
+                        <select id="allowBlur">
+                            <option value="true">Yes</option>
+                            <option value="false">No</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="input-group">
+                    <label for="maxUpdatePerFrame" class="input-label" data-translate="maxUpdates">Max Updates/Frame</label>
+                    <input type="number" id="maxUpdatePerFrame" min="1" max="100" value="5" class="input-number">
+                </div>
+            </div>
+        </div>
+        <hr class="divider">
+
+        <div class="section dirty-rect-section">
+            <div class="input-group">
+                <label for="showDirtyRect" class="input-label" data-translate="showDirtyRects">Show Dirty Rects</label>
+                <div class="dropdown">
+                    <select id="showDirtyRect">
+                        <option value="true">Yes</option>
+                        <option value="false">No</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        <hr class="divider">
+        
+        <div class="section language-section">
+            <div class="section-title">
+                <span data-translate="language">Language</span>
+                <div class="dropdown">
+                    <select id="languageSelect">
+                        <option value="auto">自动（auto）</option>
+                        <option value="en">English</option>
+                        <option value="zh">Chinese</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        <hr class="divider">
+    </div>
+    
+    <div id="container" class="container">
+        <canvas class="canvas" id="benchmark" width="800" height="600"></canvas>
+    </div>
+</div>
+
+<div class="zoom-widget" id="zoomWidget">
+    <div class="zoom-display" id="zoomDisplay">
+        <span id="zoomValue">100%</span>
+        <span class="zoom-arrow">&#9650;</span>
+    </div>
+    <div class="zoom-dropdown" id="zoomDropdown">
+        <div class="zoom-input-row">
+            <input type="number" id="zoomInput" class="zoom-input" min="1" max="2000" step="1" value="100">%
+        </div>
+        <div class="zoom-option" data-zoom="in" data-translate="zoomIn">Zoom In</div>
+        <div class="zoom-option" data-zoom="out" data-translate="zoomOut">Zoom Out</div>
+        <div class="zoom-option" data-zoom="fit" data-translate="fitView">Fit View</div>
+        <div class="zoom-option" data-zoom="50">50%</div>
+        <div class="zoom-option" data-zoom="100">100%</div>
+        <div class="zoom-option" data-zoom="200">200%</div>
+    </div>
+</div>
+<script src="./index.js"></script>
+
+</body>
+</html>
