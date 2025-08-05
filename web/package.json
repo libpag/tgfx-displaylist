@@ -37,6 +37,10 @@
     "typescript": "~5.0.3",
     "vue-eslint-parser": "^9.0.0"
   },
+  "dependencies": {
+    "@jridgewell/gen-mapping": "^0.3.5",
+    "express": "^4.21.1"
+  },
   "author": "Tencent",
   "license": "BSD-3-Clause",
   "bugs": {

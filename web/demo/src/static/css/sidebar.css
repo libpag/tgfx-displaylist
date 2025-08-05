@@ -6,11 +6,10 @@
     color: #D4D4D4;
     padding: 16px;
     box-sizing: border-box;
-    min-height: 100vh;
+    height: 100%;
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-    overflow-y: auto;
     border-right: 1px solid #333;
 }
 
@@ -46,8 +45,8 @@
     align-items: center;
     margin-bottom: 12px;
     width: 100%;
-    gap: 0;  
-    justify-content: space-between; 
+    gap: 0;
+    justify-content: space-between;
 }
 
 .input-label {
@@ -58,11 +57,11 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 0 0 140px;  
+    flex: 0 0 140px;
     min-width: 0;
     padding-right: 16px;
     box-sizing: border-box;
-    margin-right: auto;  
+    margin-right: auto;
 }
 
 .dropdown {
@@ -218,7 +217,7 @@ input[type="number"]::-webkit-outer-spin-button {
     margin-top: 8px;
     margin-left: 0;
     border: none;
-   
+
 }
 
 .tile-options-title {
@@ -235,12 +234,12 @@ input[type="number"]::-webkit-outer-spin-button {
     margin-bottom: 12px;
     width: 100%;
     gap: 0;
-    justify-content: space-between; 
+    justify-content: space-between;
 }
 
 .tile-options .input-label {
     flex: 0 0 140px;
-    padding-right: 8px;  
+    padding-right: 8px;
     margin-right: 0;
 }
 
@@ -313,15 +312,15 @@ input[type="number"]::-webkit-outer-spin-button {
 
 .flex-center {
     display: flex;
-    align-items: center; 
+    align-items: center;
 }
 
 .tile-options.hidden {
-    display: none;  
+    display: none;
 }
 
 .checkbox-label.no-margin {
-    margin-right: 0; 
+    margin-right: 0;
 }
 
 .input-number {
