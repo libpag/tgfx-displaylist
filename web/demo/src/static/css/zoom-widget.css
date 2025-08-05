@@ -1,0 +1,152 @@
+
+.zoom-widget {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    background: #16161D;
+    border: 1px solid #505050;
+    border-radius: 8px;
+    min-width: 60px;
+    z-index: 9999;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    font-size: 12px;
+    color: #fff;
+    padding: 4px 8px;
+    user-select: none;
+}
+
+.zoom-widget .zoom-display {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    justify-content: space-between;
+    height: 28px; 
+}
+
+.zoom-widget .zoom-arrow {
+    margin-left: 6px;
+    font-size: 10px;
+}
+
+.zoom-dropdown {
+    display: none;
+    position: absolute;
+    bottom: 30px;
+    right: 0;
+    background: #2c2c2c;
+    border: 1px solid #505050;
+    border-radius: 4px;
+    width: 160px; 
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    padding: 4px 0;
+    z-index: 10000;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+}
+
+.zoom-option {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 16px 6px 16px; 
+    margin: 0 4px; 
+}
+
+.zoom-option-text {
+    flex: 1;
+}
+
+.zoom-shortcut {
+    color: #BABABA;
+    font-size: 11px;
+    margin-left: 8px;
+}
+
+.zoom-divider {
+    height: 1px;
+    background: #505050;
+    margin: 4px 0;
+}
+
+.zoom-dropdown.show {
+    display: block;
+}
+
+.zoom-dropdown .zoom-option,
+.zoom-dropdown .zoom-input-row {
+    padding: 6px 12px; 
+    cursor: pointer;
+    color: #fff;
+    background: none;
+    border: none;
+    width: 100%;
+    text-align: left;
+    outline: none;
+    font-size: 12px;
+    box-sizing: border-box;
+    height: 28px;
+    display: flex;
+    align-items: center;
+}
+
+.zoom-dropdown .zoom-option:hover {
+    background: #0078d7;
+    border-radius: 4px;
+    margin: 0 2px;
+    height: 26px; 
+    line-height: 26px; 
+    width: calc(100% - 4px);
+}
+
+.zoom-dropdown .zoom-input-row {
+    display: flex;
+    align-items: center;
+    padding: 6px 16px;
+    cursor: default;
+    height: 28px;
+    border-bottom: 1px solid #505050;
+    margin-bottom: 4px;
+}
+
+.zoom-dropdown .zoom-input {
+    width: 80%; 
+    height: 24px;
+    border: 1px solid #505050;
+    background: #2c2c2c;
+    color: #fff;
+    padding: 4px 8px;
+    font-size: 12px;
+    text-align: right;
+    -moz-appearance: textfield;
+    margin-left: 0; 
+    box-sizing: border-box;
+    border-radius: 4px;
+    flex-grow: 1; 
+}
+.zoom-option {
+    padding: 6px 16px; 
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.zoom-option-text {
+    margin-left: 0; 
+}
+
+.zoom-dropdown .zoom-input:hover {
+    border-color: #606060;
+}
+
+.zoom-dropdown .zoom-input:focus {
+    outline: none;
+    border-color: #0078d7;
+    box-shadow: 0 0 0 1px #0078d7;
+}
+
+.zoom-dropdown .zoom-input::-webkit-outer-spin-button,
+.zoom-dropdown .zoom-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
