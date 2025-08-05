@@ -1,27 +1,22 @@
-
 .sidebar {
     width: 320px;
     min-width: 320px;
     max-width: 320px;
     background: #16161D;
-    color: #fff;
-    padding: 24px 16px;
+    color: #D4D4D4;
+    padding: 16px;
     box-sizing: border-box;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
     overflow-y: auto;
+    border-right: 1px solid #333;
 }
 
 .section {
     margin-bottom: 0;
     padding-bottom: 0;
-}
-
-.language-section .dropdown {
-    width: 180px;
-    margin-left: 0;
 }
 
 .section-title {
@@ -33,6 +28,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .divider {
@@ -48,27 +46,58 @@
     align-items: center;
     margin-bottom: 12px;
     width: 100%;
+    gap: 0;  
+    justify-content: space-between; 
 }
 
 .input-label {
     font-size: 14px;
     color: #fff;
-    flex: 0 0 80px;
-    margin-right: 8px;
     font-weight: normal;
     text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 0 0 140px;  
+    min-width: 0;
+    padding-right: 16px;
+    box-sizing: border-box;
+    margin-right: auto;  
 }
 
 .dropdown {
     position: relative;
     display: inline-block;
-    width: 180px;
-    margin-left: 16px;
+    width: 120px;
+    margin-left: 0;
+    flex-shrink: 0;
+    flex-grow: 0;
+}
+
+.input-number {
+    width: 120px;
+    flex-shrink: 0;
+    flex-grow: 0;
+    margin-left: 0;
+}
+
+
+.dropdown select,
+.input-number {
+    height: 28px;
+    line-height: 28px;
+    padding: 0 8px;
+}
+
+.section .input-group,
+.tile-options .input-group {
+    padding-left: 0;
+    margin-left: 0;
 }
 
 .dropdown select {
     width: 100%;
-    padding: 2px 8px;
+    padding: 4px 8px;
     font-size: 12px;
     border: 1px solid #505050;
     border-radius: 4px;
@@ -82,7 +111,9 @@
     background-repeat: no-repeat;
     background-position: right 8px center;
     background-size: 12px;
-    text-align: center; 
+    text-align: center;
+    height: 24px;
+    line-height: 1;
 }
 
 .dropdown select:hover {
@@ -105,9 +136,10 @@
     padding: 2px 8px;
     font-size: 12px;
     text-align: center;
-    width: 180px;
+    width: 120px;
     box-sizing: border-box;
     transition: all 0.2s;
+    flex-shrink: 0;
 }
 
 .input-select:hover,
@@ -182,26 +214,43 @@ input[type="number"]::-webkit-outer-spin-button {
 
 .tile-options {
     background: none;
-    padding: 0 0 0 28px;
+    padding: 0 0 0 16px;
     margin-top: 8px;
     margin-left: 0;
     border: none;
+   
 }
 
 .tile-options-title {
     font-size: 12px;
     color: #BABABA;
     margin-bottom: 8px;
+    margin-left: -16px;
+    padding-left: 16px;
 }
 
 .tile-options .input-group {
     display: flex;
     align-items: center;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
+    width: 100%;
+    gap: 0;
+    justify-content: space-between; 
+}
+
+.tile-options .input-label {
+    flex: 0 0 140px;
+    padding-right: 8px;  
+    margin-right: 0;
 }
 
 .tile-options .dropdown {
-    width: 180px;
+    width: 120px;
+    margin-left: 0;
+}
+
+.tile-options .input-number {
+    width: 120px;
     margin-left: 0;
 }
 
@@ -209,10 +258,14 @@ input[type="number"]::-webkit-outer-spin-button {
 .tile-options .input-label {
     font-size: 12px !important;
     color: #BABABA !important;
-    flex: 0 0 80px;
+    flex: 1;
+    min-width: 0;
     margin-right: 8px;
     font-weight: normal;
     text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .tile-options .checkbox-label {
@@ -247,6 +300,17 @@ input[type="number"]::-webkit-outer-spin-button {
     cursor: pointer;
 }
 
+.dirty-rect-section .input-label {
+    font-size: 16px;
+    font-weight: bold;
+    color: #fff;
+    flex: 0 0 120px;
+    margin-right: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .flex-center {
     display: flex;
     align-items: center; 
@@ -258,4 +322,59 @@ input[type="number"]::-webkit-outer-spin-button {
 
 .checkbox-label.no-margin {
     margin-right: 0; 
+}
+
+.input-number {
+    border: 1px solid #505050;
+    background: #2c2c2c;
+    color: #fff;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    text-align: center;
+    width: 120px;
+    box-sizing: border-box;
+    transition: all 0.2s;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    height: 24px;
+    margin-left: 0;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.file-section .section-title,
+.language-section .section-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    margin-bottom: 12px;
+}
+
+.file-section .dropdown,
+.language-section .dropdown,
+.render-mode-section .dropdown,
+.dirty-rect-section .dropdown,
+.tile-options .dropdown {
+    width: 120px;
+    margin-left: 0;
+    margin-right: 0;
+    flex-shrink: 0;
+}
+
+.render-mode-section .input-label,
+.file-section .section-title span,
+.language-section .section-title span,
+.dirty-rect-section .input-label {
+    font-size: 16px;
+    font-weight: bold;
+    color: #fff;
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+    flex: 0 0 140px;
+    margin-right: 8px;
+    min-width: 140px;
 }

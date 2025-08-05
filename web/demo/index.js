@@ -1,4 +1,4 @@
-// 正确
+
 const translations = {
     en: {
         language: "Language",
@@ -47,14 +47,15 @@ function detectBrowserLanguage() {
     return browserLang.startsWith('zh') ? 'zh' : 'en';
 }
 
-// 初始化时立即检测并应用浏览器语言
+
 function applyInitialLanguage() {
     const langToUse = detectBrowserLanguage();
     const langSelect = document.getElementById('languageSelect');
     if (langSelect) {
-        langSelect.value = 'auto'; // 保持选择器为auto
+        langSelect.value = 'auto'; 
     }
-    updateTexts(); // 立即更新文本
+    updateTexts(); 
+    
 }
 
 function updateTexts() {
@@ -73,7 +74,8 @@ function updateTexts() {
     
     const langSelect = document.getElementById('languageSelect');
     if (langSelect) {
-        // 保持Auto选项文本固定为"自动（auto）"
+        
+        
         langSelect.options[0].text = '自动（auto）';
         langSelect.options[1].text = 'English';
         langSelect.options[2].text = 'Chinese';
@@ -114,7 +116,8 @@ function initLanguageSwitcher() {
     
     languageSelect.addEventListener('change', function() {
         currentLang = this.value;
-        // 如果选择了Auto，强制重新检测浏览器语言
+       
+        
         if (currentLang === 'auto') {
             updateTexts();
         } else {
@@ -126,7 +129,7 @@ function initLanguageSwitcher() {
 }
 
 function initApp() {
-    applyInitialLanguage(); // 先设置初始语言
+    applyInitialLanguage(); 
     initLanguageSwitcher();
     
     document.getElementById('fileSelect').addEventListener('change', function() {

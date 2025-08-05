@@ -17,18 +17,6 @@
 <body>
 <div class="page-content">
     <div id="sidebar" class="sidebar">
-        <div class="section language-section">
-            <div class="section-title">
-                <span data-translate="language">Language</span>
-                <div class="dropdown">
-                    <select id="languageSelect">
-                        <option value="en">English</option>
-                        <option value="zh">中文</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-        <hr class="divider">
         
         <div class="section file-section">
             <div class="section-title">
@@ -45,20 +33,15 @@
         <hr class="divider">
 
         <div class="section render-mode-section">
-            <div class="section-title" data-translate="renderMode">Render Mode</div>
-            <div class="radio-group">
-                <label class="option-label">
-                    <input type="radio" class="custom-radio" name="renderMode" value="direct" checked>
-                <span class="radio-label" data-translate="direct">Direct</span>
-                </label>
-                <label class="option-label">
-                    <input type="radio" class="custom-radio" name="renderMode" value="partial">
-                <span class="radio-label" data-translate="partial">Partial</span>
-                </label>
-                <label class="option-label">
-                    <input type="radio" class="custom-radio" name="renderMode" value="tile">
-                <span class="radio-label" data-translate="tile">Tile</span>
-                </label>
+            <div class="input-group">
+                <label for="renderModeSelect" class="input-label" data-translate="renderMode">Render Mode</label>
+                <div class="dropdown">
+                    <select id="renderModeSelect">
+                        <option value="direct" data-translate="direct">Direct</option>
+                        <option value="partial" data-translate="partial">Partial</option>
+                        <option value="tile" data-translate="tile">Tile</option>
+                    </select>
+                </div>
             </div>
             
             <div id="tileOptions" class="tile-options hidden">
@@ -83,11 +66,14 @@
                     <input type="number" id="maxTileCount" min="1" max="100" value="32" class="input-number">
                 </div>
                 
-                <div class="input-group input-group-blur">
-                    <label class="checkbox-label no-margin" for="allowBlur">
-                        <input type="checkbox" id="allowBlur" class="custom-checkbox">
-                        <span data-translate="allowBlur">Allow Blur</span>
-                    </label>
+                <div class="input-group">
+                    <label for="allowBlur" class="input-label" data-translate="allowBlur">Allow Blur</label>
+                    <div class="dropdown">
+                        <select id="allowBlur">
+                            <option value="true">Yes</option>
+                            <option value="false">No</option>
+                        </select>
+                    </div>
                 </div>
                 
                 <div class="input-group">
@@ -99,11 +85,28 @@
         <hr class="divider">
 
         <div class="section dirty-rect-section">
+            <div class="input-group">
+                <label for="showDirtyRect" class="input-label" data-translate="showDirtyRects">Show Dirty Rects</label>
+                <div class="dropdown">
+                    <select id="showDirtyRect">
+                        <option value="true">Yes</option>
+                        <option value="false">No</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        <hr class="divider">
+        
+        <div class="section language-section">
             <div class="section-title">
-                <span class="flex-center">
-                    <input type="checkbox" id="showDirtyRect" class="custom-checkbox">
-                    <span class="section-title" data-translate="showDirtyRects">Show Dirty Rects</span>
-                </span>
+                <span data-translate="language">Language</span>
+                <div class="dropdown">
+                    <select id="languageSelect">
+                        <option value="auto">自动（auto）</option>
+                        <option value="en">English</option>
+                        <option value="zh">Chinese</option>
+                    </select>
+                </div>
             </div>
         </div>
         <hr class="divider">

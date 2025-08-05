@@ -1,3 +1,4 @@
+
 .zoom-widget {
     position: fixed;
     right: 24px;
@@ -35,13 +36,37 @@
     background: #2c2c2c;
     border: 1px solid #505050;
     border-radius: 4px;
-    min-width: 110px;
+    width: 160px; 
     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     padding: 4px 0;
     z-index: 10000;
     appearance: none;
     -webkit-appearance: none;
     -moz-appearance: none;
+}
+
+.zoom-option {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 16px 6px 16px; 
+    margin: 0 4px; 
+}
+
+.zoom-option-text {
+    flex: 1;
+}
+
+.zoom-shortcut {
+    color: #BABABA;
+    font-size: 11px;
+    margin-left: 8px;
+}
+
+.zoom-divider {
+    height: 1px;
+    background: #505050;
+    margin: 4px 0;
 }
 
 .zoom-dropdown.show {
@@ -77,25 +102,47 @@
 .zoom-dropdown .zoom-input-row {
     display: flex;
     align-items: center;
-    gap: 4px;
+    padding: 6px 16px;
     cursor: default;
-}
-
-.zoom-dropdown .zoom-input-row:hover {
-    background: none;
+    height: 28px;
+    border-bottom: 1px solid #505050;
+    margin-bottom: 4px;
 }
 
 .zoom-dropdown .zoom-input {
-    width: 44px;
+    width: 80%; 
     height: 24px;
     border: 1px solid #505050;
-    background: #2c2c2c; 
+    background: #2c2c2c;
     color: #fff;
-    border-radius: 4px;
-    padding: 2px 4px;
+    padding: 4px 8px;
     font-size: 12px;
     text-align: right;
     -moz-appearance: textfield;
+    margin-left: 0; 
+    box-sizing: border-box;
+    border-radius: 4px;
+    flex-grow: 1; 
+}
+.zoom-option {
+    padding: 6px 16px; 
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.zoom-option-text {
+    margin-left: 0; 
+}
+
+.zoom-dropdown .zoom-input:hover {
+    border-color: #606060;
+}
+
+.zoom-dropdown .zoom-input:focus {
+    outline: none;
+    border-color: #0078d7;
+    box-shadow: 0 0 0 1px #0078d7;
 }
 
 .zoom-dropdown .zoom-input::-webkit-outer-spin-button,
