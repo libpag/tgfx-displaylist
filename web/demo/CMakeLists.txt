@@ -9,6 +9,7 @@ if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release")
 endif ()
 
+set(TGFX_BUILD_DRAWERS ON)
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 
@@ -29,7 +30,13 @@ if (DEFINED EMSCRIPTEN)
     list(APPEND DISPLAYLIST_COMPILE_OPTIONS -fno-rtti -DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0)
     list(APPEND DISPLAYLIST_LINK_OPTIONS --no-entry -lembind -fno-rtti -DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0 -sEXPORT_NAME='Displaylist' -sWASM=1 -sASYNCIFY
             -sMAX_WEBGL_VERSION=2 -sEXPORTED_RUNTIME_METHODS=['GL','Asyncify','HEAPU8'] -sMODULARIZE=1
-            -sENVIRONMENT=web,worker -sEXPORT_ES6=1 -std=c++17)
+            -sENVIRONMENT=web,worker -sEXPORT_ES6=1)
+    set(unsupported_emsdk_versions "4.0.11")
+    foreach (unsupported_version IN LISTS unsupported_emsdk_versions)
+        if (${EMSCRIPTEN_VERSION} VERSION_EQUAL ${unsupported_version})
+            message(FATAL_ERROR "Emscripten version ${EMSCRIPTEN_VERSION} is not supported.")
+        endif ()
+    endforeach ()
     if (EMSCRIPTEN_PTHREADS)
         list(APPEND DISPLAYLIST_LINK_OPTIONS -sUSE_PTHREADS=1 -sINITIAL_MEMORY=32MB -sALLOW_MEMORY_GROWTH=1
                 -sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency -sPROXY_TO_PTHREAD=1
@@ -51,4 +58,4 @@ endif ()
 
 target_compile_options(displaylist PUBLIC ${DISPLAYLIST_COMPILE_OPTIONS})
 target_link_options(displaylist PUBLIC ${DISPLAYLIST_LINK_OPTIONS})
-target_link_libraries(displaylist tgfx)
+target_link_libraries(displaylist tgfx-drawers tgfx)
