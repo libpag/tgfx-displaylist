@@ -11,8 +11,8 @@
         "dir": "third_party/vendor_tools"
       },
       {
-        "url": "${PAG_GROUP}/tgfx.git",
-        "commit": "f52720a8179ef61069c3a118650125cb4e1f2d0c",
+        "url": "https://github.com/djh-greener/tgfx.git",
+        "commit": "a69102b5616c3348a9cbe01a2e1e34c9f3090be8",
         "dir": "third_party/tgfx"
       }
     ]

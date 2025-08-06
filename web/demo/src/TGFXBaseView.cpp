@@ -1,0 +1,94 @@
+/////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//  Tencent is pleased to support the open source community by making tgfx-displaylist available.
+//
+//  Copyright (C) 2025 Tencent. All rights reserved.
+//
+//  Licensed under the BSD 3-Clause License (the "License"); you may not use this file except
+//  in compliance with the License. You may obtain a copy of the License at
+//
+//      https://opensource.org/licenses/BSD-3-Clause
+//
+//  unless required by applicable law or agreed to in writing, software distributed under the
+//  license is distributed on an "as is" basis, without warranties or conditions of any kind,
+//  either express or implied. see the license for the specific language governing permissions
+//  and limitations under the license.
+//
+/////////////////////////////////////////////////////////////////////////////////////////////////
+#include "TGFXBaseView.h"
+#include "TGFXBaseView.h"
+#include <cmath>
+#include "drawers/Drawer.h"
+#include "tgfx/core/Point.h"
+
+using namespace emscripten;
+
+namespace displaylist {
+TGFXBaseView::TGFXBaseView(const std::string& canvasID) : canvasID(canvasID) {
+    appHost = std::make_shared<drawers::AppHost>();
+}
+
+void TGFXBaseView::updateSize(float devicePixelRatio) {
+    if (!canvasID.empty()) {
+        int width = 0;
+        int height = 0;
+        emscripten_get_canvas_element_size(canvasID.c_str(), &width, &height);
+        auto sizeChanged = appHost->updateScreen(width, height, devicePixelRatio);
+        if (sizeChanged && window) {
+            window->invalidSize();
+        }
+    }
+}
+
+void TGFXBaseView::setImagePath(const std::string& name, const std::string& imagePath) {
+    auto image = tgfx::Image::MakeFromFile(imagePath.c_str());
+    if (image) {
+        appHost->addImage(name, std::move(image));
+    }
+}
+
+bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY) {
+    if (appHost->width() <= 0 || appHost->height() <= 0) {
+        return true;
+    }
+    if (window == nullptr) {
+        window = tgfx::WebGLWindow::MakeFrom(canvasID);
+    }
+    if (window == nullptr) {
+        return true;
+    }
+    auto device = window->getDevice();
+    auto context = device->lockContext();
+    if (context == nullptr) {
+        return true;
+    }
+    auto surface = window->getSurface(context);
+    if (surface == nullptr) {
+        device->unlock();
+        return true;
+    }
+    auto canvas = surface->getCanvas();
+    canvas->clear();
+    drawers::Drawer::DrawBackground(canvas, appHost.get());
+    auto drawer = drawers::Drawer::GetByIndex(drawIndex % drawers::Drawer::Count());
+    drawer->displayList.setZoomScale(zoom);
+    drawer->displayList.setContentOffset(offsetX, offsetY);
+    drawer->build(appHost.get());
+    drawer->displayList.render(canvas->getSurface(), false);
+    context->flushAndSubmit();
+    window->present(context);
+    device->unlock();
+    return true;
+}
+
+}  // namespace displaylist
+
+
+// Error: Undefined symbol: main
+// Note: A `main` function must be implemented as the entry point for the application.
+// Without it, the WebAssembly build will fail. Ensure that you have defined a `main` function
+// or correctly specified an alternative entry point during the build process.
+
+int main() {
+    return 0;
+}
