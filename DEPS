@@ -12,7 +12,7 @@
       },
       {
         "url": "https://github.com/djh-greener/tgfx.git",
-        "commit": "a69102b5616c3348a9cbe01a2e1e34c9f3090be8",
+        "commit": "b623b4ce209898c834c1fab83d3dada3be291074",
         "dir": "third_party/tgfx"
       }
     ]
