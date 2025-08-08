@@ -11,16 +11,24 @@
     <link rel="stylesheet" href="static/css/layout.css">
     <link rel="stylesheet" href="static/css/sidebar.css">
     <link rel="stylesheet" href="static/css/zoom-widget.css">
+    <link rel="stylesheet" href="static/css/browser-alert.css">
     <link rel="icon" href="static/icon/favicon.ico" type="image/x-icon">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 </head>
 <body>
+
+<div id="mask-overlay" class="mask-overlay hidden">
+    <div id="browser-warning" class="desktop-alert hidden">
+        <p data-translate="desktopWarning"></p>
+    </div>
+</div>
+
 <div class="page-content">
     <div id="sidebar" class="sidebar">
         
         <div class="section file-section">
             <div class="section-title">
-                <span data-translate="selectFile">Select File</span>
+                <span data-translate="selectFile"></span>
                 <div class="dropdown">
                     <select id="fileSelect">
                         <option value="file1">File 1</option>
@@ -34,12 +42,12 @@
 
         <div class="section render-mode-section">
             <div class="input-group">
-                <label for="renderModeSelect" class="input-label" data-translate="renderMode">Render Mode</label>
+                <label for="renderModeSelect" class="input-label" data-translate="renderMode"></label>
                 <div class="dropdown">
                     <select id="renderModeSelect">
-                        <option value="direct" data-translate="direct">Direct</option>
-                        <option value="partial" data-translate="partial">Partial</option>
-                        <option value="tile" data-translate="tile">Tile</option>
+                        <option value="direct" data-translate="direct"></option>
+                        <option value="partial" data-translate="partial"></option>
+                        <option value="tile" data-translate="tile"></option>
                     </select>
                 </div>
             </div>
@@ -47,7 +55,7 @@
             <div id="tileOptions" class="tile-options hidden">
                 
                 <div class="input-group">
-                    <label for="tileSizeSelect" class="input-label" data-translate="tileSize">Tile Size</label>
+                    <label for="tileSizeSelect" class="input-label" data-translate="tileSize"></label>
                     <div class="dropdown">
                         <select id="tileSizeSelect">
                             <option value="64">64x64</option>
@@ -61,22 +69,22 @@
                 </div>
                 
                 <div class="input-group">
-                    <label for="maxTileCount" class="input-label" data-translate="maxTiles">Max Tiles</label>
+                    <label for="maxTileCount" class="input-label" data-translate="maxTiles"></label>
                     <input type="number" id="maxTileCount" min="1" max="100" value="32" class="input-number">
                 </div>
                 
                 <div class="input-group">
-                    <label for="allowBlur" class="input-label" data-translate="allowBlur">Allow Blur</label>
+                    <label for="allowBlur" class="input-label" data-translate="allowBlur"></label>
                     <div class="dropdown">
                         <select id="allowBlur">
-                            <option value="true">Yes</option>
-                            <option value="false">No</option>
+                            <option value="true" data-translate="allowBlurYes"></option>
+                            <option value="false" data-translate="allowBlurNo"></option>
                         </select>
                     </div>
                 </div>
                 
                 <div class="input-group">
-                    <label for="maxUpdatePerFrame" class="input-label" data-translate="maxUpdates">Max Updates/Frame</label>
+                    <label for="maxUpdatePerFrame" class="input-label" data-translate="maxUpdates"></label>
                     <input type="number" id="maxUpdatePerFrame" min="1" max="100" value="5" class="input-number">
                 </div>
             </div>
@@ -85,11 +93,11 @@
 
         <div class="section dirty-rect-section">
             <div class="input-group">
-                <label for="showDirtyRect" class="input-label" data-translate="showDirtyRects">Show Dirty Rects</label>
+                <label for="showDirtyRect" class="input-label" data-translate="showDirtyRects"></label>
                 <div class="dropdown">
                     <select id="showDirtyRect">
-                        <option value="true">Yes</option>
-                        <option value="false">No</option>
+                        <option value="true" data-translate="showDirtyRectYes"></option>
+                        <option value="false" data-translate="showDirtyRectNo"></option>
                     </select>
                 </div>
             </div>
@@ -98,12 +106,12 @@
         
         <div class="section language-section">
             <div class="section-title">
-                <span data-translate="language">Language</span>
+                <span data-translate="language"></span>
                 <div class="dropdown">
                     <select id="languageSelect">
-                        <option value="auto">自动（auto）</option>
-                        <option value="en">English</option>
-                        <option value="zh">Chinese</option>
+                        <option value="auto" data-translate="autoOption"></option>
+                        <option value="en" data-translate="englishOption"></option>
+                        <option value="zh" data-translate="chineseOption"></option>
                     </select>
                 </div>
             </div>
@@ -112,7 +120,7 @@
     </div>
     
     <div id="container" class="container">
-        <canvas class="canvas" id="benchmark" width="800" height="600"></canvas>
+        <canvas class="canvas" id="displaylist" width="800" height="600"></canvas>
     </div>
 </div>
 
@@ -125,15 +133,15 @@
         <div class="zoom-input-row">
             <input type="number" id="zoomInput" class="zoom-input" min="1" max="2000" step="1" value="100">%
         </div>
-        <div class="zoom-option" data-zoom="in" data-translate="zoomIn">Zoom In</div>
-        <div class="zoom-option" data-zoom="out" data-translate="zoomOut">Zoom Out</div>
-        <div class="zoom-option" data-zoom="fit" data-translate="fitView">Fit View</div>
+        <div class="zoom-option" data-zoom="in" data-translate="zoomIn"></div>
+        <div class="zoom-option" data-zoom="out" data-translate="zoomOut"></div>
+        <div class="zoom-option" data-zoom="fit" data-translate="fitView"></div>
         <div class="zoom-option" data-zoom="50">50%</div>
         <div class="zoom-option" data-zoom="100">100%</div>
         <div class="zoom-option" data-zoom="200">200%</div>
     </div>
 </div>
-<script src="./wasm-mt/index.js"></script>
+<script type="module" src="./wasm-mt/index.js"></script>
 
 </body>
 </html>

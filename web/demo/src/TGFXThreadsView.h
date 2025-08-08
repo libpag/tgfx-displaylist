@@ -19,10 +19,10 @@
 #include "TGFXBaseView.h"
 using namespace emscripten;
 namespace displaylist {
- class TGFXThreadsView : public TGFXBaseView {
+class TGFXThreadsView : public TGFXBaseView {
  public:
   TGFXThreadsView(const std::string& canvasID);
 
   void registerFonts(const val& fontVal, const val& emojiFontVal);
- };
+};
 }  // namespace displaylist

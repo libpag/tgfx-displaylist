@@ -21,7 +21,7 @@
 #include "tgfx/gpu/opengl/webgl/WebGLWindow.h"
 
 namespace displaylist {
- class TGFXBaseView {
+class TGFXBaseView {
  public:
   TGFXBaseView(const std::string& canvasID);
 
@@ -31,11 +31,15 @@ namespace displaylist {
 
   bool draw(int drawIndex, float zoom, float offsetX, float offsetY);
 
+  void setAllowBlur(bool allowBlur);
+
+  void setShowDirtyRect(bool isVisible);
+
  protected:
   std::shared_ptr<drawers::AppHost> appHost;
 
  private:
   std::string canvasID = "";
   std::shared_ptr<tgfx::Window> window = nullptr;
- };
+};
 }  // namespace displaylist
