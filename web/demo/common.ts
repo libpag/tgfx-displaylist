@@ -23,6 +23,9 @@ export class TGFXBaseView {
     public draw: (drawIndex: number, zoom: number, offsetX: number, offsetY: number) => boolean;
     public setAllowBlur: (allowBlur: boolean) => void;
     public setShowDirtyRect: (isVisible: boolean) => void;
+    public getDrawerNames: () => Promise<any>; // 返回Promise，可能是C++对象或数组
+    public setImagePath: (name: string, imagePath: string) => void;
+
 }
 
 
@@ -37,6 +40,7 @@ export class ShareData {
     public isPageVisible: boolean = true;
     public resized: boolean = true;
     public updateSizeTimer: number | null = null;
+    public drawerNames: string[] = [];
 }
 
 export let shareData: ShareData;
@@ -164,7 +168,23 @@ function initLanguageSwitcher() {
 export function initApp() {
     applyInitialLanguage();
     initLanguageSwitcher();
-
+    const fileSelect = document.getElementById('fileSelect') as HTMLSelectElement;
+    if (fileSelect && shareData?.drawerNames?.length > 0) {
+        fileSelect.innerHTML = '';
+        shareData.drawerNames.forEach((name, index) => {
+            const option = document.createElement('option');
+            option.value = index.toString();
+            option.textContent = name;
+            fileSelect.appendChild(option);
+        });
+        fileSelect.value = '0';
+        shareData.drawIndex = 0;
+          console.log('下拉框初始化完成，当前选项:', fileSelect.options);
+        // 默认渲染第一个文件
+        if (shareData.tgfxBaseView) {
+            draw(shareData);
+        }
+    }
     const addChangeListener = (id: string) => {
         const element = document.getElementById(id);
         if (element) {
@@ -267,22 +287,65 @@ function isPromise(obj: any): obj is Promise<any> {
     return !!obj && typeof obj.then === "function";
 }
 
+let lastDrawState = {
+    index: -1,
+    zoom: 0,
+    offsetX: 0,
+    offsetY: 0
+};
+
 function draw(shareData: ShareData) {
-    if (canDraw === true) {
+    const currentState = {
+        index: shareData.drawIndex,
+        zoom: shareData.zoom,
+        offsetX: shareData.offsetX,
+        offsetY: shareData.offsetY
+    };
+
+    // 检查状态是否变化
+    const stateChanged = 
+        currentState.index !== lastDrawState.index ||
+        Math.abs(currentState.zoom - lastDrawState.zoom) > 0.001 ||
+        Math.abs(currentState.offsetX - lastDrawState.offsetX) > 0.001 ||
+        Math.abs(currentState.offsetY - lastDrawState.offsetY) > 0.001;
+
+    if (canDraw && stateChanged) {
+        console.log('开始绘制', {
+            drawIndex: currentState.index,
+            zoom: currentState.zoom,
+            offsetX: currentState.offsetX,
+            offsetY: currentState.offsetY,
+            drawerName: shareData.drawerNames[currentState.index]
+        });
+
         canDraw = false;
-        const result = shareData.tgfxBaseView.draw(
-            shareData.drawIndex,
-            shareData.zoom,
-            shareData.offsetX,
-            shareData.offsetY
+        lastDrawState = {...currentState};
+
+    let result;
+    try {
+        result = shareData.tgfxBaseView.draw(
+            currentState.index,
+            currentState.zoom,
+            currentState.offsetX,
+            currentState.offsetY
         );
+    } catch (e) {
+        console.error('WASM绘制调用失败:', e);
+        canDraw = true;
+        return;
+    }
+
         if (isPromise(result)) {
             result.then((res: boolean) => {
                 canDraw = res;
+                console.log('异步绘制完成', {result: res});
             });
         } else {
             canDraw = result;
+            console.log('同步绘制完成', {result});
         }
+    } else if (!stateChanged) {
+        console.log('绘制状态未变化，跳过重绘');
     }
 }
 
@@ -313,20 +376,32 @@ export function updateSize(shareData: ShareData) {
     shareData.tgfxBaseView.updateSize(scaleFactor);
 }
 
+let lastRenderTime = 0;
+const MIN_RENDER_INTERVAL = 1000 / 30; // 30fps
+
 export function animationLoop(shareData: ShareData) {
     const frame = async (timestamp: number) => {
-        if (shareData.tgfxBaseView && shareData.isPageVisible) {
-            await draw(shareData);
-            shareData.animationFrameId = requestAnimationFrame(frame);
-        } else {
+        if (!shareData.tgfxBaseView || !shareData.isPageVisible) {
             shareData.animationFrameId = null;
+            return;
         }
+
+        const now = performance.now();
+        if (now - lastRenderTime >= MIN_RENDER_INTERVAL) {
+            await draw(shareData);
+            lastRenderTime = now;
+        }
+        
+        shareData.animationFrameId = requestAnimationFrame(frame);
     };
-    shareData.animationFrameId = requestAnimationFrame(frame);
+    
+    if (!shareData.animationFrameId) {
+        shareData.animationFrameId = requestAnimationFrame(frame);
+    }
 }
 
 export function onResizeEvent(shareData: ShareData) {
-    if (!shareData.tgfxBaseView || shareData.resized) {
+    if (!shareData.tgfxBaseView || shareData?.resized) {
         return;
     }
     shareData.resized = true;
@@ -392,7 +467,9 @@ export function checkBrowser(): boolean {
 
 
 export async function loadModule(engineDir: string = "displaylist", type: string = "mt") {
-    shareData = new ShareData();
+    if (!shareData) {
+        shareData = new ShareData();
+    }
     const Displaylist = await import(`${engineDir}.js`);
     if (type === 'mt') {
         if (!crossOriginIsolated) {
@@ -413,22 +490,60 @@ export async function loadModule(engineDir: string = "displaylist", type: string
         moduleConfig['mainScriptUrlOrBlob'] = `${engineDir}.js`;
     }
 
-    shareData.DisplaylistModule = await Displaylist.default(moduleConfig);
-    TGFXBind(shareData.DisplaylistModule);
-
-    let tgfxView = shareData.DisplaylistModule.TGFXThreadsView.MakeFrom('#displaylist');
-    shareData.tgfxBaseView = tgfxView;
-    var imagePath = "/static/resources/assets/bridge.jpg";
-    await tgfxView.setImagePath("bridge", imagePath);
-    imagePath = "/static/resources/assets/tgfx.png";
-    await tgfxView.setImagePath("TGFX", imagePath);
-    var fontPath = "/static/resources/font/NotoSansSC-Regular.otf";
-    const fontBuffer = await fetch(fontPath).then((response) => response.arrayBuffer());
-    const fontUIntArray = new Uint8Array(fontBuffer);
-    var emojiFontPath = "/static/resources/font/NotoColorEmoji.ttf";
-    const emojiFontBuffer = await fetch(emojiFontPath).then((response) => response.arrayBuffer());
-    const emojiFontUIntArray = new Uint8Array(emojiFontBuffer);
-    tgfxView.registerFonts(fontUIntArray, emojiFontUIntArray);
+    try {
+        shareData.DisplaylistModule = await Displaylist.default(moduleConfig);
+        TGFXBind(shareData.DisplaylistModule);
+        
+        if (!shareData.DisplaylistModule.TGFXThreadsView) {
+            throw new Error('WASM模块未正确初始化，缺少TGFXThreadsView');
+        }
+        
+        const tgfxView = shareData.DisplaylistModule.TGFXThreadsView.MakeFrom('#displaylist');
+        if (!tgfxView) {
+            throw new Error('无法创建TGFX视图');
+        }
+        shareData.tgfxBaseView = tgfxView;
+    } catch (e) {
+        console.error('WASM初始化失败:', e);
+        throw e;
+    }
+    const drawerNames = await shareData.tgfxBaseView.getDrawerNames();
+    shareData.drawerNames = [];
+    
+    // 检查是否是C++对象
+    if (drawerNames && typeof drawerNames.size === 'function') {
+        for (let i = 0; i < drawerNames.size(); i++) {
+            shareData.drawerNames.push(drawerNames.get(i));
+        }
+    } else if (Array.isArray(drawerNames)) {
+        // 如果已经是数组直接使用
+        shareData.drawerNames = drawerNames;
+    }
+    
+    console.log('读取到的Drawer名称列表:', shareData.drawerNames);
+//
+    try {
+        // 使用绝对路径加载图片
+        const baseUrl = window.location.origin;
+        const imagePath1 = `${baseUrl}/static/resources/assets/bridge.jpg`;
+        await shareData.tgfxBaseView.setImagePath("bridge", imagePath1);
+        
+        const imagePath2 = `${baseUrl}/static/resources/assets/tgfx.png`;
+        await shareData.tgfxBaseView.setImagePath("TGFX", imagePath2);
+        
+        const fontPath = "/static/resources/font/NotoSansSC-Regular.otf";
+        const fontBuffer = await fetch(fontPath).then((response) => response.arrayBuffer());
+        const fontUIntArray = new Uint8Array(fontBuffer);
+        
+        const emojiFontPath = "/static/resources/font/NotoColorEmoji.ttf";
+        const emojiFontBuffer = await fetch(emojiFontPath).then((response) => response.arrayBuffer());
+        const emojiFontUIntArray = new Uint8Array(emojiFontBuffer);
+        
+        shareData.tgfxBaseView.registerFonts(fontUIntArray, emojiFontUIntArray);
+    } catch (e) {
+        console.error('！！！资源加载失败:', e);
+        throw e;
+    }
     updateSize(shareData);
     animationLoop(shareData);
     setupVisibilityListeners(shareData);
@@ -439,6 +554,34 @@ export function bindEventListeners() {
     if (showDirtyRect && shareData.tgfxBaseView) {
         showDirtyRect.addEventListener('change', () => {
             shareData.tgfxBaseView.setShowDirtyRect(showDirtyRect.value === 'true');
+        });
+    }
+    const fileSelect = document.getElementById('fileSelect') as HTMLSelectElement | null;
+    if (fileSelect && shareData.tgfxBaseView) {
+        fileSelect.addEventListener('change', () => {
+            const selectedIndex = parseInt(fileSelect.value);
+            if (!isNaN(selectedIndex) && selectedIndex >= 0 && selectedIndex < shareData.drawerNames.length) {
+                // 记录切换前的状态
+                const prevIndex = shareData.drawIndex;
+                const prevName = shareData.drawerNames[prevIndex];
+                const newName = shareData.drawerNames[selectedIndex];
+                
+                console.log(`绘图项切换: 从 ${prevName} (索引:${prevIndex}) 到 ${newName} (索引:${selectedIndex})`);
+                
+                // 只有实际发生变化时才更新
+                if (selectedIndex !== prevIndex) {
+                    shareData.drawIndex = selectedIndex;
+                    // 重置视图状态
+                    shareData.zoom = 1.0;
+                    shareData.offsetX = 0;
+                    shareData.offsetY = 0;
+                    
+                    // 触发重新渲染
+                    draw(shareData);
+                } else {
+                    console.log('绘图项未变化，跳过重绘');
+                }
+            }
         });
     }
 }

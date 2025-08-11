@@ -28,7 +28,9 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("updateSize", &TGFXBaseView::updateSize)
       .function("draw", &TGFXBaseView::draw)
       .function("setAllowBlur", &TGFXBaseView::setAllowBlur)
+      .function("getDrawerNames", &TGFXBaseView::getDrawerNames)
       .function("setShowDirtyRect", &TGFXBaseView::setShowDirtyRect);
+
 
   class_<TGFXThreadsView, base<TGFXBaseView>>("TGFXThreadsView")
       .smart_ptr<std::shared_ptr<TGFXThreadsView>>("TGFXThreadsView")

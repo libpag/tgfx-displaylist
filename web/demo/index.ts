@@ -31,6 +31,7 @@ if (typeof window !== 'undefined') {
             initApp();
             if(checkBrowser()){
                 await loadModule('/wasm-mt/displaylist');
+                initApp();
                 bindEventListeners();
             }else {
                 throw new Error("This website only supports desktop browsers based on Chromium (like Chrome or Edge). Please switch to one of these browsers to access it.");

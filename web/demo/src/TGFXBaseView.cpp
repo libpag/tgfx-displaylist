@@ -48,6 +48,27 @@ void TGFXBaseView::setImagePath(const std::string& name, const std::string& imag
 }
 
 bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY) {
+  static int lastDrawIndex = -1;
+  static float lastZoom = 0;
+  static float lastOffsetX = 0;
+  static float lastOffsetY = 0;
+  
+  // 检查状态是否变化
+  bool stateChanged = 
+      (drawIndex != lastDrawIndex) ||
+      (fabs(zoom - lastZoom) > 0.001f) ||
+      (fabs(offsetX - lastOffsetX) > 0.001f) ||
+      (fabs(offsetY - lastOffsetY) > 0.001f);
+  
+  if (!stateChanged) {
+      return false; // 返回false表示不需要重绘
+  }
+  
+  lastDrawIndex = drawIndex;
+  lastZoom = zoom;
+  lastOffsetX = offsetX;
+  lastOffsetY = offsetY;
+
   if (appHost->width() <= 0 || appHost->height() <= 0) {
     return true;
   }
@@ -89,6 +110,9 @@ void TGFXBaseView::setAllowBlur(bool allowBlur) {
 void TGFXBaseView::setShowDirtyRect(bool isVisible) {
   auto drawer = drawers::Drawer::GetByName("ConicGradient");
   drawer->displayList.showDirtyRegions(isVisible);
+}
+std::vector<std::string> TGFXBaseView::getDrawerNames()  {
+  return drawers::Drawer::Names();
 }
 
 }  // namespace displaylist

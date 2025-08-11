@@ -35,6 +35,8 @@ class TGFXBaseView {
 
   void setShowDirtyRect(bool isVisible);
 
+  std::vector<std::string> getDrawerNames();
+
  protected:
   std::shared_ptr<drawers::AppHost> appHost;
 
