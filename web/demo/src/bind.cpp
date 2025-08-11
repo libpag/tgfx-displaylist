@@ -29,6 +29,7 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("draw", &TGFXBaseView::draw)
       .function("setAllowBlur", &TGFXBaseView::setAllowBlur)
       .function("getDrawerNames", &TGFXBaseView::getDrawerNames)
+      .function("setImageRef", &TGFXBaseView::setImageRef)
       .function("setShowDirtyRect", &TGFXBaseView::setShowDirtyRect);
 
 

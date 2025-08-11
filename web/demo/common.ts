@@ -18,6 +18,16 @@
 import {TGFXBind} from '../lib/tgfx';
 import * as types from '../types/types';
 
+export function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        // img.crossOrigin = "Anonymous"; // 添加跨域支持
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = src;
+    });
+}
+
 export class TGFXBaseView {
     public updateSize: (devicePixelRatio: number) => void;
     public draw: (drawIndex: number, zoom: number, offsetX: number, offsetY: number) => boolean;
@@ -525,11 +535,12 @@ export async function loadModule(engineDir: string = "displaylist", type: string
     try {
         // 使用绝对路径加载图片
         const baseUrl = window.location.origin;
-        const imagePath1 = `${baseUrl}/static/resources/assets/bridge.jpg`;
-        await shareData.tgfxBaseView.setImagePath("bridge", imagePath1);
+   
+        const image1 = await loadImage(`${baseUrl}/static/resources/assets/bridge.jpg`);
+        shareData.tgfxBaseView.setImageRef("bridge", image1);
         
-        const imagePath2 = `${baseUrl}/static/resources/assets/tgfx.png`;
-        await shareData.tgfxBaseView.setImagePath("TGFX", imagePath2);
+        const image2 = await loadImage(`${baseUrl}/static/resources/assets/tgfx.png`);
+        shareData.tgfxBaseView.setImageRef("TGFX", image2);
         
         const fontPath = "/static/resources/font/NotoSansSC-Regular.otf";
         const fontBuffer = await fetch(fontPath).then((response) => response.arrayBuffer());

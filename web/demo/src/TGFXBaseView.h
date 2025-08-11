@@ -27,6 +27,9 @@ class TGFXBaseView {
 
   void setImagePath(const std::string& name, const std::string& imagePath);
 
+  void setImageRef(const std::string& name, emscripten::val imageRef);
+
+
   void updateSize(float devicePixelRatio);
 
   bool draw(int drawIndex, float zoom, float offsetX, float offsetY);
