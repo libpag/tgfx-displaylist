@@ -175,7 +175,30 @@ function initLanguageSwitcher() {
 }
 
 
+// 画布错误恢复计数器
+let canvasRecoveryAttempts = 0;
+const MAX_RECOVERY_ATTEMPTS = 3;
+
 export function initApp() {
+    // 添加画布错误监听
+    const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
+    canvas.addEventListener('webglcontextlost', (e) => {
+        console.error('WebGL上下文丢失:', e);
+        canvasRecoveryAttempts++;
+        if (canvasRecoveryAttempts <= MAX_RECOVERY_ATTEMPTS) {
+            setTimeout(() => {
+                console.log(`尝试恢复画布(第${canvasRecoveryAttempts}次)`);
+                if (shareData.tgfxBaseView) {
+                    shareData.tgfxBaseView = null;
+                    loadModule();
+                }
+            }, 500);
+        } else {
+            console.error('超过最大恢复尝试次数');
+            canvas.style.display = 'none';
+        }
+        e.preventDefault();
+    });
     applyInitialLanguage();
     initLanguageSwitcher();
     const fileSelect = document.getElementById('fileSelect') as HTMLSelectElement;
@@ -304,86 +327,135 @@ let lastDrawState = {
     offsetY: 0
 };
 
-function draw(shareData: ShareData) {
+async function draw(shareData: ShareData): Promise<void> {
+    if (!canDraw || !shareData.isPageVisible) return;
+    
+    // 状态对比优化
     const currentState = {
         index: shareData.drawIndex,
         zoom: shareData.zoom,
         offsetX: shareData.offsetX,
         offsetY: shareData.offsetY
     };
+    
+    if (JSON.stringify(currentState) === JSON.stringify(lastDrawState)) {
+        return; // 状态未变化跳过绘制
+    }
+    
+    // 大尺寸画布跳过部分中间帧
+    const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
+    const isLargeCanvas = canvas.width > 2000 || canvas.height > 2000;
+    if (isLargeCanvas && Math.random() > 0.7) {
+        return; // 30%概率跳过绘制
+    }
 
-    // 检查状态是否变化
-    const stateChanged = 
-        currentState.index !== lastDrawState.index ||
-        Math.abs(currentState.zoom - lastDrawState.zoom) > 0.001 ||
-        Math.abs(currentState.offsetX - lastDrawState.offsetX) > 0.001 ||
-        Math.abs(currentState.offsetY - lastDrawState.offsetY) > 0.001;
+    const drawState = {
+        index: shareData.drawIndex,
+        zoom: shareData.zoom,
+        offsetX: shareData.offsetX,
+        offsetY: shareData.offsetY
+    };
 
-    if (canDraw && stateChanged) {
-        console.log('开始绘制', {
-            drawIndex: currentState.index,
-            zoom: currentState.zoom,
-            offsetX: currentState.offsetX,
-            offsetY: currentState.offsetY,
-            drawerName: shareData.drawerNames[currentState.index]
-        });
+    console.log('开始绘制', {
+        drawIndex: drawState.index,
+        zoom: drawState.zoom,
+        offsetX: drawState.offsetX,
+        offsetY: drawState.offsetY,
+        drawerName: shareData.drawerNames[drawState.index]
+    });
 
-        canDraw = false;
-        lastDrawState = {...currentState};
+    canDraw = false;
+    lastDrawState = {...drawState};
 
-    let result;
+    const retryDraw = async () => {
+        let result = false;
+        let retryCount = 0;
+        
+        while (!result && retryCount < 3) {
+            try {
+                console.log(`第${retryCount+1}次绘制尝试...`);
+                result = shareData.tgfxBaseView.draw(
+                    drawState.index,
+                    drawState.zoom,
+                    drawState.offsetX,
+                    drawState.offsetY
+                );
+                
+                if (!result) {
+                    retryCount++;
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+            } catch (e) {
+                console.error('绘制异常:', e);
+                break;
+            }
+        }
+        return result;
+    };
+    
     try {
-        result = shareData.tgfxBaseView.draw(
-            currentState.index,
-            currentState.zoom,
-            currentState.offsetX,
-            currentState.offsetY
-        );
+        const result = await retryDraw();
+        canDraw = result;
+        return;
     } catch (e) {
         console.error('WASM绘制调用失败:', e);
         canDraw = true;
         return;
     }
-
-        if (isPromise(result)) {
-            result.then((res: boolean) => {
-                canDraw = res;
-                console.log('异步绘制完成', {result: res});
-            });
-        } else {
-            canDraw = result;
-            console.log('同步绘制完成', {result});
-        }
-    } else if (!stateChanged) {
-        console.log('绘制状态未变化，跳过重绘');
-    }
 }
 
 export function updateSize(shareData: ShareData) {
-    if (!shareData.tgfxBaseView || !canDraw) {
+    if (!shareData.tgfxBaseView) {
         shareData.resized = false;
         return;
     }
-    if (!canDraw) {
-        if (shareData.updateSizeTimer) {
-            clearTimeout(shareData.updateSizeTimer);
-        }
-        shareData.updateSizeTimer = window.setTimeout(() => {
-            updateSize(shareData);
-        }, 300);
-        return;
-    }
+
+    // 完全重置绘制状态
+    lastDrawState = {
+        index: -1,
+        zoom: -1,
+        offsetX: -1,
+        offsetY: -1
+    };
+    canDraw = true; // 强制解锁绘制状态
+
     shareData.resized = false;
-    console.log("updateSize");
+    console.log("强制更新尺寸并重绘");
     const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
     const container = document.getElementById('container') as HTMLDivElement;
-    const screenRect = container.getBoundingClientRect();
-    const scaleFactor = window.devicePixelRatio;
-    canvas.width = screenRect.width * scaleFactor;
-    canvas.height = screenRect.height * scaleFactor;
-    canvas.style.width = screenRect.width + "px";
-    canvas.style.height = screenRect.height + "px";
-    shareData.tgfxBaseView.updateSize(scaleFactor);
+    
+    // 精确计算可用空间（考虑padding和border）
+    const style = window.getComputedStyle(container);
+    const width = container.clientWidth 
+                - parseFloat(style.paddingLeft)
+                - parseFloat(style.paddingRight)
+                - parseFloat(style.borderLeftWidth)
+                - parseFloat(style.borderRightWidth);
+    const height = container.clientHeight
+                 - parseFloat(style.paddingTop)
+                 - parseFloat(style.paddingBottom)
+                 - parseFloat(style.borderTopWidth)
+                 - parseFloat(style.borderBottomWidth);
+    
+    // 双检查设备像素比
+    const scaleFactor = Math.max(1, Math.floor(window.devicePixelRatio * 100) / 100);
+    const newWidth = Math.max(1, Math.floor(width * scaleFactor));
+    const newHeight = Math.max(1, Math.floor(height * scaleFactor));
+    
+    // 尺寸变化超过10%才更新
+    const widthChanged = Math.abs(canvas.width - newWidth) > canvas.width * 0.1;
+    const heightChanged = Math.abs(canvas.height - newHeight) > canvas.height * 0.1;
+    
+    if (widthChanged || heightChanged) {
+        canvas.width = newWidth;
+        canvas.height = newHeight;
+        canvas.style.width = width + "px";
+        canvas.style.height = height + "px";
+        
+        shareData.tgfxBaseView.updateSize(scaleFactor);
+        // 使用requestAnimationFrame确保在下一帧绘制
+        requestAnimationFrame(() => draw(shareData));
+    }
 }
 
 let lastRenderTime = 0;
@@ -397,8 +469,18 @@ export function animationLoop(shareData: ShareData) {
         }
 
         const now = performance.now();
-        if (now - lastRenderTime >= MIN_RENDER_INTERVAL) {
-            await draw(shareData);
+        if (now - lastRenderTime >= MIN_RENDER_INTERVAL || !shareData.isPageVisible) {
+            // 页面从隐藏状态恢复时强制重绘
+            if (!shareData.isPageVisible) {
+                lastDrawState = {
+                    index: -1,
+                    zoom: -1,
+                    offsetX: -1,
+                    offsetY: -1
+                };
+                canDraw = true;
+            }
+        await draw(shareData).catch(e => console.error('绘制失败:', e));
             lastRenderTime = now;
         }
         
@@ -418,9 +500,8 @@ export function onResizeEvent(shareData: ShareData) {
     if (shareData.updateSizeTimer) {
         clearTimeout(shareData.updateSizeTimer);
     }
-    shareData.updateSizeTimer = window.setTimeout(() => {
-        updateSize(shareData);
-    }, 300);
+    // 立即更新尺寸和重绘
+    updateSize(shareData);
 }
 
 function handleVisibilityChange(shareData: ShareData) {
@@ -555,6 +636,19 @@ export async function loadModule(engineDir: string = "displaylist", type: string
         console.error('！！！资源加载失败:', e);
         throw e;
     }
+    // 初始化完成后强制重置所有状态
+    shareData.drawIndex = 0;
+    shareData.zoom = 1.0;
+    shareData.offsetX = 0;
+    shareData.offsetY = 0;
+    canDraw = true;
+    lastDrawState = {
+        index: -1,
+        zoom: -1,
+        offsetX: -1,
+        offsetY: -1
+    };
+    
     updateSize(shareData);
     animationLoop(shareData);
     setupVisibilityListeners(shareData);

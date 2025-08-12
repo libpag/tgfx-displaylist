@@ -26,18 +26,29 @@ using namespace emscripten;
 namespace displaylist {
 TGFXBaseView::TGFXBaseView(const std::string& canvasID) : canvasID(canvasID) {
   appHost = std::make_shared<drawers::AppHost>();
+  lastDrawIndex = -1;
+  lastZoom = 0;
+  lastOffsetX = 0;
+  lastOffsetY = 0;
 }
 
-void TGFXBaseView::updateSize(float devicePixelRatio) {
-  if (!canvasID.empty()) {
-    int width = 0;
-    int height = 0;
-    emscripten_get_canvas_element_size(canvasID.c_str(), &width, &height);
-    auto sizeChanged = appHost->updateScreen(width, height, devicePixelRatio);
-    if (sizeChanged && window) {
-      window->invalidSize();
-    }
+bool TGFXBaseView::updateSize(float devicePixelRatio) {
+  if (canvasID.empty()) return false;
+  
+  int width = 0;
+  int height = 0;
+  emscripten_get_canvas_element_size(canvasID.c_str(), &width, &height);
+  
+  // 确保最小尺寸为1
+  width = std::max(1, width);
+  height = std::max(1, height);
+  
+  auto sizeChanged = appHost->updateScreen(width, height, devicePixelRatio);
+  // 尺寸变化时仅标记需要重建窗口
+  if (sizeChanged) {
+    window = nullptr; // 下次draw时会自动重建
   }
+  return sizeChanged;
 }
 
 void TGFXBaseView::setImagePath(const std::string& name, const std::string& imagePath) {
@@ -48,39 +59,49 @@ void TGFXBaseView::setImagePath(const std::string& name, const std::string& imag
 }
 
 bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY) {
-  static int lastDrawIndex = -1;
-  static float lastZoom = 0;
-  static float lastOffsetX = 0;
-  static float lastOffsetY = 0;
-  
-  // 检查状态是否变化
-  bool stateChanged = 
-      (drawIndex != lastDrawIndex) ||
-      (fabs(zoom - lastZoom) > 0.001f) ||
-      (fabs(offsetX - lastOffsetX) > 0.001f) ||
-      (fabs(offsetY - lastOffsetY) > 0.001f);
-  
-  if (!stateChanged) {
-      return false; // 返回false表示不需要重绘
+  // 检测上下文丢失（通过尝试获取设备）
+  if (window) {
+    auto device = window->getDevice();
+    if (!device || !device->lockContext()) {
+      printf("WebGL上下文丢失或设备不可用，正在恢复...\n");
+      window = nullptr;
+    } else {
+      device->unlock();
+    }
   }
-  
+  // 强制更新状态并重绘
   lastDrawIndex = drawIndex;
   lastZoom = zoom;
   lastOffsetX = offsetX;
   lastOffsetY = offsetY;
+  
+  // 添加调试日志
+  printf("强制重绘: index=%d, zoom=%.2f, offset=(%.2f,%.2f)\n", 
+         drawIndex, zoom, offsetX, offsetY);
 
   if (appHost->width() <= 0 || appHost->height() <= 0) {
     return true;
   }
+  // 仅在需要时创建WebGL窗口
   if (window == nullptr) {
     window = tgfx::WebGLWindow::MakeFrom(canvasID);
-  }
-  if (window == nullptr) {
-    return true;
+    if (window == nullptr) {
+      printf("WebGL窗口创建失败！\n");
+      return true;
+    }
+    printf("创建新WebGL窗口: %dx%d\n", appHost->width(), appHost->height());
   }
   auto device = window->getDevice();
+  if (!device) {
+    printf("获取设备失败！\n");
+    window = nullptr;
+    return true;
+  }
+  
   auto context = device->lockContext();
-  if (context == nullptr) {
+  if (!context) {
+    printf("获取绘图上下文失败！\n");
+    window = nullptr;
     return true;
   }
   auto surface = window->getSurface(context);
@@ -90,7 +111,10 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
   }
   auto canvas = surface->getCanvas();
   canvas->clear();
-  drawers::Drawer::DrawBackground(canvas, appHost.get());
+  // 确保总是绘制背景
+  if (appHost->width() > 0 && appHost->height() > 0) {
+      drawers::Drawer::DrawBackground(canvas, appHost.get());
+  }
   auto drawer = drawers::Drawer::GetByIndex(drawIndex % drawers::Drawer::Count());
   drawer->displayList.setZoomScale(zoom);
   drawer->displayList.setContentOffset(offsetX, offsetY);

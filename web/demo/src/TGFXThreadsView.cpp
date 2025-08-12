@@ -15,6 +15,7 @@
 //  and limitations under the license.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////////
+//勉强正确版本
 #include "TGFXThreadsView.h"
 
 namespace displaylist {
@@ -39,6 +40,12 @@ std::shared_ptr<tgfx::Data> GetDataFromEmscripten(const val& emscriptenData) {
 }
 
 TGFXThreadsView::TGFXThreadsView(const std::string& canvasID) : TGFXBaseView(canvasID) {
+}
+void TGFXBaseView::setImageRef(const std::string& name, emscripten::val imageRef) {
+  auto image = tgfx::Image::MakeFrom(imageRef);
+  if (image) {
+    appHost->addImage(name, image);
+  }
 }
 
 void TGFXThreadsView::registerFonts(const val& fontVal, const val& emojiFontVal) {

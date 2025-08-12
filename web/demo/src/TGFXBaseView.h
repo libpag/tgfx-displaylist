@@ -30,7 +30,7 @@ class TGFXBaseView {
   void setImageRef(const std::string& name, emscripten::val imageRef);
 
 
-  void updateSize(float devicePixelRatio);
+  bool updateSize(float devicePixelRatio);
 
   bool draw(int drawIndex, float zoom, float offsetX, float offsetY);
 
@@ -42,9 +42,26 @@ class TGFXBaseView {
 
  protected:
   std::shared_ptr<drawers::AppHost> appHost;
+  std::shared_ptr<tgfx::WebGLWindow> window;
+  
+  int width() const { 
+    int w = 0, h = 0;
+    emscripten_get_canvas_element_size(canvasID.c_str(), &w, &h);
+    return w;
+  }
+  int height() const { 
+    int w = 0, h = 0;
+    emscripten_get_canvas_element_size(canvasID.c_str(), &w, &h);
+    return h;
+  }
+  
+  // 记录上次绘制状态
+  int lastDrawIndex = -1;
+  float lastZoom = 0;
+  float lastOffsetX = 0;
+  float lastOffsetY = 0;
 
  private:
   std::string canvasID = "";
-  std::shared_ptr<tgfx::Window> window = nullptr;
 };
 }  // namespace displaylist
