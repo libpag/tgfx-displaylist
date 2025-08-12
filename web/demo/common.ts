@@ -21,7 +21,6 @@ import * as types from '../types/types';
 export function loadImage(src: string): Promise<HTMLImageElement> {
     return new Promise((resolve, reject) => {
         const img = new Image();
-        // img.crossOrigin = "Anonymous"; // 添加跨域支持
         img.onload = () => resolve(img);
         img.onerror = reject;
         img.src = src;
@@ -33,11 +32,9 @@ export class TGFXBaseView {
     public draw: (drawIndex: number, zoom: number, offsetX: number, offsetY: number) => boolean;
     public setAllowBlur: (allowBlur: boolean) => void;
     public setShowDirtyRect: (isVisible: boolean) => void;
-    public getDrawerNames: () => Promise<any>; // 返回Promise，可能是C++对象或数组
+    public getDrawerNames: () => Promise<any>;
     public setImagePath: (name: string, imagePath: string) => void;
-
 }
-
 
 export class ShareData {
     public DisplaylistModule: types.TGFX = null;
@@ -122,7 +119,6 @@ function detectBrowserLanguage(): 'zh' | 'en' {
 
 function applyInitialLanguage() {
     currentLang = localStorage.getItem(LANGUAGE_KEY) as 'auto' | 'en' | 'zh' || DEFAULT_LANGUAGE;
-
     const langSelect = document.getElementById('languageSelect') as HTMLSelectElement | null;
     if (langSelect) {
         langSelect.value = 'auto';
@@ -164,39 +160,18 @@ function updateTexts() {
 function initLanguageSwitcher() {
     const languageSelect = document.getElementById('languageSelect') as HTMLSelectElement | null;
     if (!languageSelect) return;
-
     languageSelect.addEventListener('change', function () {
         currentLang = this.value as 'auto' | 'en' | 'zh';
         localStorage.setItem(LANGUAGE_KEY, currentLang);
         updateTexts();
     });
-
     languageSelect.value = currentLang;
 }
 
-
-// 画布错误恢复计数器
-let canvasRecoveryAttempts = 0;
-const MAX_RECOVERY_ATTEMPTS = 3;
-
 export function initApp() {
-    // 添加画布错误监听
     const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
     canvas.addEventListener('webglcontextlost', (e) => {
-        console.error('WebGL上下文丢失:', e);
-        canvasRecoveryAttempts++;
-        if (canvasRecoveryAttempts <= MAX_RECOVERY_ATTEMPTS) {
-            setTimeout(() => {
-                console.log(`尝试恢复画布(第${canvasRecoveryAttempts}次)`);
-                if (shareData.tgfxBaseView) {
-                    shareData.tgfxBaseView = null;
-                    loadModule();
-                }
-            }, 500);
-        } else {
-            console.error('超过最大恢复尝试次数');
-            canvas.style.display = 'none';
-        }
+        console.error('WebGL context lost');
         e.preventDefault();
     });
     applyInitialLanguage();
@@ -212,8 +187,6 @@ export function initApp() {
         });
         fileSelect.value = '0';
         shareData.drawIndex = 0;
-          console.log('下拉框初始化完成，当前选项:', fileSelect.options);
-        // 默认渲染第一个文件
         if (shareData.tgfxBaseView) {
             draw(shareData);
         }
@@ -249,16 +222,12 @@ export function initApp() {
     const zoomDisplay = document.getElementById('zoomDisplay');
 
     const setZoom = (val: number) => {
-        // 使用更精细的缩放步长(0.1%)
         val = Math.max(10, Math.min(20000, Math.round(val * 10))) / 10;
         currentZoom = val;
         if (zoomValue) zoomValue.textContent = `${val}%`;
         if (zoomInput) zoomInput.value = val.toString();
-        
-        // 更新共享数据中的zoom值
         if (shareData) {
-            shareData.zoom = val / 100; // 转换为比例值
-            // 强制重置绘制状态
+            shareData.zoom = val / 100;
             lastDrawState = {
                 index: -1,
                 zoom: -1,
@@ -291,7 +260,7 @@ export function initApp() {
 
     if (zoomDisplay && zoomDropdown) {
         zoomDisplay.addEventListener('click', (e) => {
-            e.stopPropagation(); // 阻止事件冒泡
+            e.stopPropagation();
             const isExpanded = zoomDisplay.getAttribute('aria-expanded') === 'true';
             zoomDisplay.setAttribute('aria-expanded', (!isExpanded).toString());
             zoomDropdown.classList.toggle('show', !isExpanded);
@@ -329,7 +298,6 @@ export function initApp() {
     setZoom(100);
 }
 
-
 let canDraw = true;
 
 function isPromise(obj: any): obj is Promise<any> {
@@ -346,7 +314,6 @@ let lastDrawState = {
 async function draw(shareData: ShareData): Promise<void> {
     if (!canDraw || !shareData.isPageVisible) return;
     
-    // 状态对比优化
     const currentState = {
         index: shareData.drawIndex,
         zoom: shareData.zoom,
@@ -355,10 +322,8 @@ async function draw(shareData: ShareData): Promise<void> {
     };
     
     if (JSON.stringify(currentState) === JSON.stringify(lastDrawState)) {
-        return; // 状态未变化跳过绘制
+        return;
     }
-    
-
 
     const drawState = {
         index: shareData.drawIndex,
@@ -367,13 +332,7 @@ async function draw(shareData: ShareData): Promise<void> {
         offsetY: shareData.offsetY
     };
 
-    console.log('开始绘制', {
-        drawIndex: drawState.index,
-        zoom: drawState.zoom,
-        offsetX: drawState.offsetX,
-        offsetY: drawState.offsetY,
-        drawerName: shareData.drawerNames[drawState.index]
-    });
+
 
     canDraw = false;
     lastDrawState = {...drawState};
@@ -384,7 +343,6 @@ async function draw(shareData: ShareData): Promise<void> {
         
         while (!result && retryCount < 3) {
             try {
-                console.log(`第${retryCount+1}次绘制尝试...`);
                 result = shareData.tgfxBaseView.draw(
                     drawState.index,
                     drawState.zoom,
@@ -397,7 +355,7 @@ async function draw(shareData: ShareData): Promise<void> {
                     await new Promise(resolve => setTimeout(resolve, 100));
                 }
             } catch (e) {
-                console.error('绘制异常:', e);
+                console.error('Drawing error:', e);
                 break;
             }
         }
@@ -409,7 +367,7 @@ async function draw(shareData: ShareData): Promise<void> {
         canDraw = result;
         return;
     } catch (e) {
-        console.error('WASM绘制调用失败:', e);
+        console.error('WASM drawing failed:', e);
         canDraw = true;
         return;
     }
@@ -421,21 +379,18 @@ export function updateSize(shareData: ShareData) {
         return;
     }
 
-    // 完全重置绘制状态
     lastDrawState = {
         index: -1,
         zoom: -1,
         offsetX: -1,
         offsetY: -1
     };
-    canDraw = true; // 强制解锁绘制状态
+    canDraw = true;
 
     shareData.resized = false;
-    console.log("强制更新尺寸并重绘");
     const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
     const container = document.getElementById('container') as HTMLDivElement;
     
-    // 精确计算可用空间（考虑padding和border）
     const style = window.getComputedStyle(container);
     const width = container.clientWidth 
                 - parseFloat(style.paddingLeft)
@@ -448,12 +403,10 @@ export function updateSize(shareData: ShareData) {
                  - parseFloat(style.borderTopWidth)
                  - parseFloat(style.borderBottomWidth);
     
-    // 双检查设备像素比
     const scaleFactor = Math.max(1, Math.floor(window.devicePixelRatio * 100) / 100);
     const newWidth = Math.max(1, Math.floor(width * scaleFactor));
     const newHeight = Math.max(1, Math.floor(height * scaleFactor));
     
-    // 尺寸变化超过10%才更新
     const widthChanged = Math.abs(canvas.width - newWidth) > canvas.width * 0.001;
     const heightChanged = Math.abs(canvas.height - newHeight) > canvas.height * 0.001;
     
@@ -464,13 +417,12 @@ export function updateSize(shareData: ShareData) {
         canvas.style.height = height + "px";
         
         shareData.tgfxBaseView.updateSize(scaleFactor);
-        // 使用requestAnimationFrame确保在下一帧绘制
         requestAnimationFrame(() => draw(shareData));
     }
 }
 
 let lastRenderTime = 0;
-const MIN_RENDER_INTERVAL = 1000 / 30; // 30fps
+const MIN_RENDER_INTERVAL = 1000 / 30;
 
 export function animationLoop(shareData: ShareData) {
     const frame = async (timestamp: number) => {
@@ -481,7 +433,6 @@ export function animationLoop(shareData: ShareData) {
 
         const now = performance.now();
         if (now - lastRenderTime >= MIN_RENDER_INTERVAL || !shareData.isPageVisible) {
-            // 页面从隐藏状态恢复时强制重绘
             if (!shareData.isPageVisible) {
                 lastDrawState = {
                     index: -1,
@@ -491,7 +442,7 @@ export function animationLoop(shareData: ShareData) {
                 };
                 canDraw = true;
             }
-        await draw(shareData).catch(e => console.error('绘制失败:', e));
+            await draw(shareData).catch(e => console.error('Drawing failed:', e));
             lastRenderTime = now;
         }
         
@@ -511,7 +462,6 @@ export function onResizeEvent(shareData: ShareData) {
     if (shareData.updateSizeTimer) {
         clearTimeout(shareData.updateSizeTimer);
     }
-    // 立即更新尺寸和重绘
     updateSize(shareData);
 }
 
@@ -533,7 +483,6 @@ export function setupVisibilityListeners(shareData: ShareData) {
         });
     }
 }
-
 
 export function checkBrowser(): boolean {
     const browserWarning = document.getElementById('browser-warning') as HTMLElement;
@@ -567,7 +516,6 @@ export function checkBrowser(): boolean {
     return isSupported;
 }
 
-
 export async function loadModule(engineDir: string = "displaylist", type: string = "mt") {
     if (!shareData) {
         shareData = new ShareData();
@@ -597,35 +545,32 @@ export async function loadModule(engineDir: string = "displaylist", type: string
         TGFXBind(shareData.DisplaylistModule);
         
         if (!shareData.DisplaylistModule.TGFXThreadsView) {
-            throw new Error('WASM模块未正确初始化，缺少TGFXThreadsView');
+            throw new Error('WASM module not initialized correctly, missing TGFXThreadsView');
         }
         
         const tgfxView = shareData.DisplaylistModule.TGFXThreadsView.MakeFrom('#displaylist');
         if (!tgfxView) {
-            throw new Error('无法创建TGFX视图');
+            throw new Error('Failed to create TGFX view');
         }
         shareData.tgfxBaseView = tgfxView;
     } catch (e) {
-        console.error('WASM初始化失败:', e);
+        console.error('WASM initialization failed:', e);
         throw e;
     }
     const drawerNames = await shareData.tgfxBaseView.getDrawerNames();
     shareData.drawerNames = [];
     
-    // 检查是否是C++对象
     if (drawerNames && typeof drawerNames.size === 'function') {
         for (let i = 0; i < drawerNames.size(); i++) {
             shareData.drawerNames.push(drawerNames.get(i));
         }
     } else if (Array.isArray(drawerNames)) {
-        // 如果已经是数组直接使用
         shareData.drawerNames = drawerNames;
     }
     
-    console.log('读取到的Drawer名称列表:', shareData.drawerNames);
-//
+    console.log('Drawer names loaded:', shareData.drawerNames);
+
     try {
-        // 使用绝对路径加载图片
         const baseUrl = window.location.origin;
    
         const image1 = await loadImage(`${baseUrl}/static/resources/assets/bridge.jpg`);
@@ -644,10 +589,10 @@ export async function loadModule(engineDir: string = "displaylist", type: string
         
         shareData.tgfxBaseView.registerFonts(fontUIntArray, emojiFontUIntArray);
     } catch (e) {
-        console.error('！！！资源加载失败:', e);
+        console.error('Resource loading failed:', e);
         throw e;
     }
-    // 初始化完成后强制重置所有状态
+
     shareData.drawIndex = 0;
     shareData.zoom = 1.0;
     shareData.offsetX = 0;
@@ -677,25 +622,18 @@ export function bindEventListeners() {
         fileSelect.addEventListener('change', () => {
             const selectedIndex = parseInt(fileSelect.value);
             if (!isNaN(selectedIndex) && selectedIndex >= 0 && selectedIndex < shareData.drawerNames.length) {
-                // 记录切换前的状态
                 const prevIndex = shareData.drawIndex;
                 const prevName = shareData.drawerNames[prevIndex];
                 const newName = shareData.drawerNames[selectedIndex];
                 
-                console.log(`绘图项切换: 从 ${prevName} (索引:${prevIndex}) 到 ${newName} (索引:${selectedIndex})`);
+                console.log(`Switched drawer: from ${prevName} (index:${prevIndex}) to ${newName} (index:${selectedIndex})`);
                 
-                // 只有实际发生变化时才更新
                 if (selectedIndex !== prevIndex) {
                     shareData.drawIndex = selectedIndex;
-                    // 重置视图状态
                     shareData.zoom = 1.0;
                     shareData.offsetX = 0;
                     shareData.offsetY = 0;
-                    
-                    // 触发重新渲染
                     draw(shareData);
-                } else {
-                    console.log('绘图项未变化，跳过重绘');
                 }
             }
         });

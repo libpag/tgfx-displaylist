@@ -55,7 +55,6 @@ class TGFXBaseView {
     return h;
   }
   
-  // 记录上次绘制状态
   int lastDrawIndex = -1;
   float lastZoom = 0;
   float lastOffsetX = 0;
