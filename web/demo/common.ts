@@ -249,10 +249,25 @@ export function initApp() {
     const zoomDisplay = document.getElementById('zoomDisplay');
 
     const setZoom = (val: number) => {
-        val = Math.max(1, Math.min(2000, Math.round(val)));
+        // 使用更精细的缩放步长(0.1%)
+        val = Math.max(10, Math.min(20000, Math.round(val * 10))) / 10;
         currentZoom = val;
         if (zoomValue) zoomValue.textContent = `${val}%`;
         if (zoomInput) zoomInput.value = val.toString();
+        
+        // 更新共享数据中的zoom值
+        if (shareData) {
+            shareData.zoom = val / 100; // 转换为比例值
+            // 强制重置绘制状态
+            lastDrawState = {
+                index: -1,
+                zoom: -1,
+                offsetX: -1,
+                offsetY: -1
+            };
+            canDraw = true;
+            draw(shareData);
+        }
     };
 
     const validateInput = (input: HTMLInputElement, min: number, max: number) => {
@@ -275,10 +290,11 @@ export function initApp() {
     });
 
     if (zoomDisplay && zoomDropdown) {
-        zoomDisplay.addEventListener('click', () => {
+        zoomDisplay.addEventListener('click', (e) => {
+            e.stopPropagation(); // 阻止事件冒泡
             const isExpanded = zoomDisplay.getAttribute('aria-expanded') === 'true';
             zoomDisplay.setAttribute('aria-expanded', (!isExpanded).toString());
-            zoomDropdown.classList.toggle('show');
+            zoomDropdown.classList.toggle('show', !isExpanded);
         });
     }
 
@@ -342,12 +358,7 @@ async function draw(shareData: ShareData): Promise<void> {
         return; // 状态未变化跳过绘制
     }
     
-    // 大尺寸画布跳过部分中间帧
-    const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
-    const isLargeCanvas = canvas.width > 2000 || canvas.height > 2000;
-    if (isLargeCanvas && Math.random() > 0.7) {
-        return; // 30%概率跳过绘制
-    }
+
 
     const drawState = {
         index: shareData.drawIndex,
@@ -443,8 +454,8 @@ export function updateSize(shareData: ShareData) {
     const newHeight = Math.max(1, Math.floor(height * scaleFactor));
     
     // 尺寸变化超过10%才更新
-    const widthChanged = Math.abs(canvas.width - newWidth) > canvas.width * 0.1;
-    const heightChanged = Math.abs(canvas.height - newHeight) > canvas.height * 0.1;
+    const widthChanged = Math.abs(canvas.width - newWidth) > canvas.width * 0.001;
+    const heightChanged = Math.abs(canvas.height - newHeight) > canvas.height * 0.001;
     
     if (widthChanged || heightChanged) {
         canvas.width = newWidth;

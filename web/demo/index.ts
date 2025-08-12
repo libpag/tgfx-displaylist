@@ -28,7 +28,7 @@ import {
 if (typeof window !== 'undefined') {
     window.onload = async () => {
         try {
-            initApp();
+           
             if(checkBrowser()){
                 await loadModule('/wasm-mt/displaylist');
                 initApp();
