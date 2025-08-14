@@ -34,11 +34,12 @@ class TGFXBaseView {
 
   bool draw(int drawIndex, float zoom, float offsetX, float offsetY);
 
-  void setAllowBlur(bool allowBlur);
+  void setAllowBlur(bool allowBlur, int drawIndex = 0);
 
-  void setShowDirtyRect(bool isVisible);
+  void setShowDirtyRect(bool isVisible, int drawIndex = 0);
 
   std::vector<std::string> getDrawerNames();
+  std::string getDrawerName(int index);
 
  protected:
   std::shared_ptr<drawers::AppHost> appHost;

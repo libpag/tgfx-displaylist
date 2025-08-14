@@ -117,13 +117,22 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
   return true;
 }
 
-void TGFXBaseView::setAllowBlur(bool allowBlur) {
-  auto drawer = drawers::Drawer::GetByName("ConicGradient");
+void TGFXBaseView::setAllowBlur(bool allowBlur ,int drawIndex) {
+  const std::string& drawerName = getDrawerName(drawIndex);
+
+  auto drawer = drawers::Drawer::GetByName(drawerName);
+  
   drawer->displayList.setAllowZoomBlur(allowBlur);
 }
 
-void TGFXBaseView::setShowDirtyRect(bool isVisible) {
-  auto drawer = drawers::Drawer::GetByName("ConicGradient");
+void TGFXBaseView::setShowDirtyRect(bool isVisible, int drawIndex ) {
+
+  const std::string& drawerName = getDrawerName(drawIndex);
+  auto drawer = drawers::Drawer::GetByName(drawerName);
+  if (!drawer) {
+    return;
+  }
+
   if (isVisible) {
     drawer->displayList.showDirtyRegions(true);
   } else {
@@ -132,6 +141,14 @@ void TGFXBaseView::setShowDirtyRect(bool isVisible) {
 }
 std::vector<std::string> TGFXBaseView::getDrawerNames()  {
   return drawers::Drawer::Names();
+}
+std::string TGFXBaseView::getDrawerName(int index) {
+  auto drawerNames = getDrawerNames();
+  if (index < 0 || index >= static_cast<int>(drawerNames.size())) {
+    return "";
+  }
+  const std::string& drawerName = drawerNames[static_cast<size_t>(index)];
+  return drawerName;
 }
 
 }  // namespace displaylist

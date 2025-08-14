@@ -43,7 +43,7 @@ if (typeof window !== 'undefined' && (window as any).STATIC_CONFIG) {
 export class TGFXBaseView {
     public updateSize: (devicePixelRatio: number) => void;
     public draw: (drawIndex: number, zoom: number, offsetX: number, offsetY: number) => boolean;
-    public setAllowBlur: (allowBlur: boolean) => void;
+    public setAllowBlur: (allowBlur: boolean,drawIndex:number) => void;
     public setShowDirtyRect: (isVisible: boolean) => void;
     public getDrawerNames: () => Promise<any>;
     public setImagePath: (name: string, imagePath: string) => void;
@@ -685,12 +685,22 @@ export function bindEventListeners() {
     const showDirtyRect = document.getElementById('showDirtyRect') as HTMLSelectElement | null;
     if (showDirtyRect && shareData.tgfxBaseView) {
         // 初始设置为false
-        shareData.tgfxBaseView.setShowDirtyRect(false);
+        shareData.tgfxBaseView.setShowDirtyRect(false, shareData.drawIndex);
         showDirtyRect.value = 'false'; // 确保UI状态同步
+        
+        // 切换测试用例时重置脏矩形显示状态
+        const fileSelect = document.getElementById('fileSelect');
+        if (fileSelect) {
+            fileSelect.addEventListener('change', () => {
+                shareData.tgfxBaseView.setShowDirtyRect(false, shareData.drawIndex);
+                showDirtyRect.value = 'false';
+            });
+        }
         
         showDirtyRect.addEventListener('change', () => {
             const show = showDirtyRect.value === 'true';
-            shareData.tgfxBaseView.setShowDirtyRect(show);
+            shareData.tgfxBaseView.setShowDirtyRect(show, shareData.drawIndex);
+            
             shareData.forceRedraw = true; // 设置强制重绘标志
             draw(shareData); // 触发重绘
         });
