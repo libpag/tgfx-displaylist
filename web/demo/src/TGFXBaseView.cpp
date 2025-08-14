@@ -62,7 +62,6 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
   if (window) {
     auto device = window->getDevice();
     if (!device || !device->lockContext()) {
-      printf("WebGL上下文丢失或设备不可用，正在恢复...\n");
       window = nullptr;
     } else {
       device->unlock();

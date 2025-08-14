@@ -17,6 +17,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////
 import {TGFXBind} from '../lib/tgfx';
 import * as types from '../types/types';
+import { gestureManager, initMouseEvents } from './mouseEvent';
 
 export function loadImage(src: string): Promise<HTMLImageElement> {
     return new Promise((resolve, reject) => {
@@ -25,6 +26,18 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
         img.onerror = reject;
         img.src = src;
     });
+}
+// 静态资源配置
+let STATIC_RESOURCE_BASE = '/static/resources';
+let ASSETS_BASE = '/static/resources/assets';
+let FONT_BASE = '/static/resources/font';
+
+// 如果需要CDN部署，可以通过全局变量覆盖这些值/不确定对不对
+if (typeof window !== 'undefined' && (window as any).STATIC_CONFIG) {
+    const config = (window as any).STATIC_CONFIG;
+    if (config.STATIC_RESOURCE_BASE) STATIC_RESOURCE_BASE = config.STATIC_RESOURCE_BASE;
+    if (config.ASSETS_BASE) ASSETS_BASE = config.ASSETS_BASE;
+    if (config.FONT_BASE) FONT_BASE = config.FONT_BASE;
 }
 
 export class TGFXBaseView {
@@ -129,9 +142,11 @@ function applyInitialLanguage() {
 function updateTexts() {
     const langToUse = currentLang === 'auto' ? detectBrowserLanguage() : currentLang;
     const lang = translations[langToUse];
+    //const lang = translations[langToUse] || translations[DEFAULT_LANGUAGE];
 
     document.querySelectorAll<HTMLElement>('[data-translate]').forEach(el => {
         const key = el.getAttribute('data-translate');
+        //防御 lang 不存在或没定义
         if (key && lang[key]) {
             if (el instanceof HTMLInputElement && el.type === 'checkbox' && el.nextElementSibling) {
                 (el.nextElementSibling as HTMLElement).textContent = lang[key];
@@ -227,7 +242,27 @@ export function initApp() {
         if (zoomValue) zoomValue.textContent = `${val}%`;
         if (zoomInput) zoomInput.value = val.toString();
         if (shareData) {
-            shareData.zoom = val / 100;
+            const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
+            if (canvas) {
+                const rect = canvas.getBoundingClientRect();
+                // 计算画布在视口中的中心点（考虑所有布局偏移）
+                const viewportCenterX = rect.left + rect.width / 2;
+                const viewportCenterY = rect.top + rect.height / 2;
+                
+                // 转换为画布坐标系中的点（考虑devicePixelRatio）
+                const canvasCenterX = (viewportCenterX - rect.left) * window.devicePixelRatio;
+                const canvasCenterY = (viewportCenterY - rect.top) * window.devicePixelRatio;
+                
+                // 计算新的zoom比例
+                const newZoom = val / 100;
+                
+                // 以画布中心点为基准调整offset
+                shareData.offsetX = (shareData.offsetX - canvasCenterX) * (newZoom / shareData.zoom) + canvasCenterX;
+                shareData.offsetY = (shareData.offsetY - canvasCenterY) * (newZoom / shareData.zoom) + canvasCenterY;
+                shareData.zoom = newZoom;
+            } else {
+                shareData.zoom = val / 100;
+            }
             lastDrawState = {
                 index: -1,
                 zoom: -1,
@@ -331,6 +366,7 @@ async function draw(shareData: ShareData): Promise<void> {
         offsetX: shareData.offsetX,
         offsetY: shareData.offsetY
     };
+    //复用代码优化
 
 
 
@@ -388,24 +424,35 @@ export function updateSize(shareData: ShareData) {
     canDraw = true;
 
     shareData.resized = false;
+    //防御下述两个为空
     const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
     const container = document.getElementById('container') as HTMLDivElement;
     
     const style = window.getComputedStyle(container);
-    const width = container.clientWidth 
-                - parseFloat(style.paddingLeft)
-                - parseFloat(style.paddingRight)
-                - parseFloat(style.borderLeftWidth)
-                - parseFloat(style.borderRightWidth);
-    const height = container.clientHeight
-                 - parseFloat(style.paddingTop)
-                 - parseFloat(style.paddingBottom)
-                 - parseFloat(style.borderTopWidth)
-                 - parseFloat(style.borderBottomWidth);
+    // 最小尺寸保护，防止容器过小导致渲染异常
+    const MIN_CONTAINER_WIDTH = 50;
+    const MIN_CONTAINER_HEIGHT = 50;
+    
+    // 计算容器有效尺寸，确保不小于最小值
+    const width = Math.max(MIN_CONTAINER_WIDTH, 
+                         container.clientWidth 
+                        - parseFloat(style.paddingLeft)
+                        - parseFloat(style.paddingRight)
+                        - parseFloat(style.borderLeftWidth)
+                        - parseFloat(style.borderRightWidth));
+    
+    const height = Math.max(MIN_CONTAINER_HEIGHT,
+                          container.clientHeight
+                         - parseFloat(style.paddingTop)
+                         - parseFloat(style.paddingBottom)
+                         - parseFloat(style.borderTopWidth)
+                         - parseFloat(style.borderBottomWidth));
     
     const scaleFactor = Math.max(1, Math.floor(window.devicePixelRatio * 100) / 100);
+    // 确保最终渲染尺寸不小于1像素
     const newWidth = Math.max(1, Math.floor(width * scaleFactor));
     const newHeight = Math.max(1, Math.floor(height * scaleFactor));
+    //解决magic number问题
     
     const widthChanged = Math.abs(canvas.width - newWidth) > canvas.width * 0.001;
     const heightChanged = Math.abs(canvas.height - newHeight) > canvas.height * 0.001;
@@ -571,19 +618,18 @@ export async function loadModule(engineDir: string = "displaylist", type: string
     console.log('Drawer names loaded:', shareData.drawerNames);
 
     try {
-        const baseUrl = window.location.origin;
-   
-        const image1 = await loadImage(`${baseUrl}/static/resources/assets/bridge.jpg`);
+        // 使用配置的静态资源路径
+        const image1 = await loadImage(`${ASSETS_BASE}/bridge.jpg`);
         shareData.tgfxBaseView.setImageRef("bridge", image1);
         
-        const image2 = await loadImage(`${baseUrl}/static/resources/assets/tgfx.png`);
+        const image2 = await loadImage(`${ASSETS_BASE}/tgfx.png`);
         shareData.tgfxBaseView.setImageRef("TGFX", image2);
         
-        const fontPath = "/static/resources/font/NotoSansSC-Regular.otf";
+        const fontPath = `${FONT_BASE}/NotoSansSC-Regular.otf`;
         const fontBuffer = await fetch(fontPath).then((response) => response.arrayBuffer());
         const fontUIntArray = new Uint8Array(fontBuffer);
         
-        const emojiFontPath = "/static/resources/font/NotoColorEmoji.ttf";
+        const emojiFontPath = `${FONT_BASE}/NotoColorEmoji.ttf`;
         const emojiFontBuffer = await fetch(emojiFontPath).then((response) => response.arrayBuffer());
         const emojiFontUIntArray = new Uint8Array(emojiFontBuffer);
         
@@ -604,6 +650,18 @@ export async function loadModule(engineDir: string = "displaylist", type: string
         offsetX: -1,
         offsetY: -1
     };
+    
+    // 初始化鼠标事件
+    const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
+    initMouseEvents(canvas, shareData);
+    
+    // 绑定zoom变化事件
+    gestureManager.onZoomChange((zoom) => {
+        const zoomValue = document.getElementById('zoomValue');
+        if (zoomValue) {
+            zoomValue.textContent = `${Math.round(zoom * 100)}%`;
+        }
+    });
     
     updateSize(shareData);
     animationLoop(shareData);
@@ -633,7 +691,14 @@ export function bindEventListeners() {
                     shareData.zoom = 1.0;
                     shareData.offsetX = 0;
                     shareData.offsetY = 0;
-                    draw(shareData);
+                    
+                    // 更新zoom显示
+                    const zoomValue = document.getElementById('zoomValue');
+                    if (zoomValue) {
+                        zoomValue.textContent = '100%';
+                    }
+                
+                draw(shareData);
                 }
             }
         });
