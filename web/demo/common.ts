@@ -61,6 +61,7 @@ export class ShareData {
     public resized: boolean = true;
     public updateSizeTimer: number | null = null;
     public drawerNames: string[] = [];
+    public forceRedraw: boolean = false; // 新增强制重绘标志
 }
 
 export let shareData: ShareData;
@@ -346,8 +347,20 @@ let lastDrawState = {
     offsetY: 0
 };
 
+
 async function draw(shareData: ShareData): Promise<void> {
     if (!canDraw || !shareData.isPageVisible) return;
+    
+    // 检查是否需要强制重绘
+    if (shareData.forceRedraw) {
+        shareData.forceRedraw = false;
+        lastDrawState = {
+            index: -1,
+            zoom: -1,
+            offsetX: -1,
+            offsetY: -1
+        };
+    }
     
     const currentState = {
         index: shareData.drawIndex,
@@ -671,8 +684,15 @@ export async function loadModule(engineDir: string = "displaylist", type: string
 export function bindEventListeners() {
     const showDirtyRect = document.getElementById('showDirtyRect') as HTMLSelectElement | null;
     if (showDirtyRect && shareData.tgfxBaseView) {
+        // 初始设置为false
+        shareData.tgfxBaseView.setShowDirtyRect(false);
+        showDirtyRect.value = 'false'; // 确保UI状态同步
+        
         showDirtyRect.addEventListener('change', () => {
-            shareData.tgfxBaseView.setShowDirtyRect(showDirtyRect.value === 'true');
+            const show = showDirtyRect.value === 'true';
+            shareData.tgfxBaseView.setShowDirtyRect(show);
+            shareData.forceRedraw = true; // 设置强制重绘标志
+            draw(shareData); // 触发重绘
         });
     }
     const fileSelect = document.getElementById('fileSelect') as HTMLSelectElement | null;

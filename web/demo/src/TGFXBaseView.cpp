@@ -124,7 +124,11 @@ void TGFXBaseView::setAllowBlur(bool allowBlur) {
 
 void TGFXBaseView::setShowDirtyRect(bool isVisible) {
   auto drawer = drawers::Drawer::GetByName("ConicGradient");
-  drawer->displayList.showDirtyRegions(isVisible);
+  if (isVisible) {
+    drawer->displayList.showDirtyRegions(true);
+  } else {
+    drawer->displayList.showDirtyRegions(false);
+  }
 }
 std::vector<std::string> TGFXBaseView::getDrawerNames()  {
   return drawers::Drawer::Names();
