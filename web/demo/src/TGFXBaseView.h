@@ -37,6 +37,9 @@ class TGFXBaseView {
   void setAllowBlur(bool allowBlur, int drawIndex = 0);
 
   void setShowDirtyRect(bool isVisible, int drawIndex = 0);
+  void setRenderMode(int mode, int drawIndex = 0);
+  void setTileSize(int size, int drawIndex = 0);
+  void setMaxTileCount(int count, int drawIndex = 0);
 
   std::vector<std::string> getDrawerNames();
   std::string getDrawerName(int index);

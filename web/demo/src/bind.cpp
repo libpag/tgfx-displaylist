@@ -30,6 +30,9 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("setAllowBlur", &TGFXBaseView::setAllowBlur)
       .function("getDrawerNames", &TGFXBaseView::getDrawerNames)
       .function("setImageRef", &TGFXBaseView::setImageRef)
+      .function("setRenderMode", &TGFXBaseView::setRenderMode)
+      .function("setTileSize", &TGFXBaseView::setTileSize)
+      .function("setMaxTileCount", &TGFXBaseView::setMaxTileCount)
       .function("setShowDirtyRect", &TGFXBaseView::setShowDirtyRect);
 
 

@@ -125,19 +125,40 @@ void TGFXBaseView::setAllowBlur(bool allowBlur ,int drawIndex) {
   drawer->displayList.setAllowZoomBlur(allowBlur);
 }
 
-void TGFXBaseView::setShowDirtyRect(bool isVisible, int drawIndex ) {
-
+void TGFXBaseView::setShowDirtyRect(bool isVisible, int drawIndex) {
   const std::string& drawerName = getDrawerName(drawIndex);
   auto drawer = drawers::Drawer::GetByName(drawerName);
   if (!drawer) {
     return;
   }
+  drawer->displayList.showDirtyRegions(isVisible);
+}
 
-  if (isVisible) {
-    drawer->displayList.showDirtyRegions(true);
-  } else {
-    drawer->displayList.showDirtyRegions(false);
+void TGFXBaseView::setRenderMode(int mode, int drawIndex) {
+  const std::string& drawerName = getDrawerName(drawIndex);
+  auto drawer = drawers::Drawer::GetByName(drawerName);
+  if (!drawer) {
+    return;
   }
+  drawer->displayList.setRenderMode(static_cast<tgfx::RenderMode>(mode));
+}
+
+void TGFXBaseView::setTileSize(int size, int drawIndex) {
+  const std::string& drawerName = getDrawerName(drawIndex);
+  auto drawer = drawers::Drawer::GetByName(drawerName);
+  if (!drawer) {
+    return;
+  }
+  drawer->displayList.setTileSize(size);
+}
+
+void TGFXBaseView::setMaxTileCount(int count, int drawIndex) {
+  const std::string& drawerName = getDrawerName(drawIndex);
+  auto drawer = drawers::Drawer::GetByName(drawerName);
+  if (!drawer) {
+    return;
+  }
+  drawer->displayList.setMaxTileCount(count);
 }
 std::vector<std::string> TGFXBaseView::getDrawerNames()  {
   return drawers::Drawer::Names();

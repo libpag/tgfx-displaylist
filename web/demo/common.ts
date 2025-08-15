@@ -220,15 +220,39 @@ export function initApp() {
     addChangeListener('tileSizeSelect');
     addChangeListener('allowBlur');
 
-    const renderModeSelect = document.getElementById('renderModeSelect') as HTMLSelectElement | null;
-    const tileOptions = document.getElementById('tileOptions');
+    // 瓦片大小设置
+    const tileSizeSelect = document.getElementById('tileSizeSelect') as HTMLSelectElement | null;
+    if (tileSizeSelect && shareData.tgfxBaseView) {
+        tileSizeSelect.addEventListener('change', () => {
+            const tileSize = parseInt(tileSizeSelect.value);
+            console.log(`Setting tile size to: ${tileSize} for drawer index: ${shareData.drawIndex}`);
+            shareData.tgfxBaseView.setTileSize(tileSize, shareData.drawIndex);
+            shareData.forceRedraw = true;
+            draw(shareData);
+        });
+    }
 
-    if (renderModeSelect && tileOptions) {
-        const updateTileOptions = () => {
-            tileOptions.classList.toggle('hidden', renderModeSelect.value !== 'tile');
-        };
-        renderModeSelect.addEventListener('change', updateTileOptions);
-        updateTileOptions();
+    // 最大瓦片数设置
+    const maxTileCount = document.getElementById('maxTileCount') as HTMLInputElement | null;
+    if (maxTileCount && shareData.tgfxBaseView) {
+        maxTileCount.addEventListener('change', () => {
+            const count = parseInt(maxTileCount.value);
+            console.log(`Setting max tile count to: ${count} for drawer index: ${shareData.drawIndex}`);
+            shareData.tgfxBaseView.setMaxTileCount(count, shareData.drawIndex);
+            shareData.forceRedraw = true;
+            draw(shareData);
+        });
+    }
+
+    // 允许模糊设置
+    const allowBlur = document.getElementById('allowBlur') as HTMLSelectElement | null;
+    if (allowBlur && shareData.tgfxBaseView) {
+        allowBlur.addEventListener('change', () => {
+            const allow = allowBlur.value === 'true';
+            shareData.tgfxBaseView.setAllowBlur(allow, shareData.drawIndex);
+            shareData.forceRedraw = true;
+            draw(shareData);
+        });
     }
 
     let currentZoom = 100;
@@ -682,6 +706,29 @@ export async function loadModule(engineDir: string = "displaylist", type: string
 }
 
 export function bindEventListeners() {
+    // 渲染模式切换
+    const renderModeSelect = document.getElementById('renderModeSelect') as HTMLSelectElement | null;
+    if (renderModeSelect && shareData.tgfxBaseView) {
+        renderModeSelect.addEventListener('change', () => {
+            const mode = renderModeSelect.value;
+            let modeValue = 0; // 0=Direct, 1=Partial, 2=Tiled
+            if (mode === 'partial') modeValue = 1;
+            else if (mode === 'tile') modeValue = 2;
+            
+            shareData.tgfxBaseView.setRenderMode(modeValue, shareData.drawIndex);
+            
+            // 如果是瓦片模式，显示额外选项
+            const tileOptions = document.getElementById('tileOptions');
+            if (tileOptions) {
+                tileOptions.classList.toggle('hidden', mode !== 'tile');
+            }
+            
+            shareData.forceRedraw = true;
+            draw(shareData);
+        });
+    }
+
+    // 脏矩形显示切换
     const showDirtyRect = document.getElementById('showDirtyRect') as HTMLSelectElement | null;
     if (showDirtyRect && shareData.tgfxBaseView) {
         // 初始设置为false
