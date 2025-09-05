@@ -1,7 +1,6 @@
 English | [简体中文](./README.zh_CN.md)
 
 ## Introduction
-***
 
 This project showcases the rendering capabilities of the [tgfx-layers](https://github.com/Tencent/tgfx/tree/main/include/tgfx/layers) module, 
 including advanced caching mechanisms such as partial refresh and tile-based rendering. It supports building complex, 
@@ -11,7 +10,6 @@ This project provides an intuitive way to showcase the specific usage and perfor
 You can also visit [tgfx-displaylist](https://tgfx.org/displaylist) online to experience the rendering capabilities of [tgfx-layers](https://github.com/Tencent/tgfx/tree/main/include/tgfx/layers) in real-time.
 
 ## Getting Started
-***
 
 Before building the projects, please carefully follow the instructions in the
 [**Build Prerequisites**](https://github.com/Tencent/tgfx?tab=readme-ov-file#build-prerequisites)

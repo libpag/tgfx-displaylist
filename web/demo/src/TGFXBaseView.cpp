@@ -34,27 +34,26 @@ TGFXBaseView::TGFXBaseView(const std::string& canvasID) : canvasID(canvasID) {
 
 bool TGFXBaseView::updateSize(float devicePixelRatio) {
   if (canvasID.empty()) return false;
-  
+
   int width = 0;
   int height = 0;
   emscripten_get_canvas_element_size(canvasID.c_str(), &width, &height);
-  
 
   width = std::max(1, width);
   height = std::max(1, height);
-  
+
   auto sizeChanged = appHost->updateScreen(width, height, devicePixelRatio);
-  
+
   if (sizeChanged) {
     window = nullptr;
   }
   return sizeChanged;
 }
 
-void TGFXBaseView::setImagePath(const std::string& name, const std::string& imagePath) {
-  auto image = tgfx::Image::MakeFromFile(imagePath.c_str());
+void TGFXBaseView::setImage(const std::string& name, tgfx::NativeImageRef nativeImage) {
+  auto image = tgfx::Image::MakeFrom(nativeImage);
   if (image) {
-    appHost->addImage(name, std::move(image));
+    appHost->addImage(name, image);
   }
 }
 
@@ -67,18 +66,16 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
       device->unlock();
     }
   }
-  
+
   lastDrawIndex = drawIndex;
   lastZoom = zoom;
   lastOffsetX = offsetX;
   lastOffsetY = offsetY;
-  
- 
 
   if (appHost->width() <= 0 || appHost->height() <= 0) {
     return true;
   }
-  // 
+  //
   if (window == nullptr) {
     window = tgfx::WebGLWindow::MakeFrom(canvasID);
     if (window == nullptr) {
@@ -90,7 +87,7 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
     window = nullptr;
     return true;
   }
-  
+
   auto context = device->lockContext();
   if (!context) {
     window = nullptr;
@@ -104,7 +101,7 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
   auto canvas = surface->getCanvas();
   canvas->clear();
   if (appHost->width() > 0 && appHost->height() > 0) {
-      drawers::Drawer::DrawBackground(canvas, appHost.get());
+    drawers::Drawer::DrawBackground(canvas, appHost.get());
   }
   auto drawer = drawers::Drawer::GetByIndex(drawIndex % drawers::Drawer::Count());
   drawer->displayList.setZoomScale(zoom);
@@ -117,16 +114,16 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
   return true;
 }
 
-void TGFXBaseView::setAllowBlur(bool allowBlur ,int drawIndex) {
-  const std::string& drawerName = getDrawerName(drawIndex);
+void TGFXBaseView::setAllowBlur(bool allowBlur) {
+  const std::string& drawerName = getDrawerName(lastDrawIndex);
 
   auto drawer = drawers::Drawer::GetByName(drawerName);
-  
+
   drawer->displayList.setAllowZoomBlur(allowBlur);
 }
 
-void TGFXBaseView::setShowDirtyRect(bool isVisible, int drawIndex) {
-  const std::string& drawerName = getDrawerName(drawIndex);
+void TGFXBaseView::setShowDirtyRect(bool isVisible) {
+  const std::string& drawerName = getDrawerName(lastDrawIndex);
   auto drawer = drawers::Drawer::GetByName(drawerName);
   if (!drawer) {
     return;
@@ -134,8 +131,8 @@ void TGFXBaseView::setShowDirtyRect(bool isVisible, int drawIndex) {
   drawer->displayList.showDirtyRegions(isVisible);
 }
 
-void TGFXBaseView::setRenderMode(int mode, int drawIndex) {
-  const std::string& drawerName = getDrawerName(drawIndex);
+void TGFXBaseView::setRenderMode(int mode) {
+  const std::string& drawerName = getDrawerName(lastDrawIndex);
   auto drawer = drawers::Drawer::GetByName(drawerName);
   if (!drawer) {
     return;
@@ -143,8 +140,8 @@ void TGFXBaseView::setRenderMode(int mode, int drawIndex) {
   drawer->displayList.setRenderMode(static_cast<tgfx::RenderMode>(mode));
 }
 
-void TGFXBaseView::setTileSize(int size, int drawIndex) {
-  const std::string& drawerName = getDrawerName(drawIndex);
+void TGFXBaseView::setTileSize(int size) {
+  const std::string& drawerName = getDrawerName(lastDrawIndex);
   auto drawer = drawers::Drawer::GetByName(drawerName);
   if (!drawer) {
     return;
@@ -152,16 +149,17 @@ void TGFXBaseView::setTileSize(int size, int drawIndex) {
   drawer->displayList.setTileSize(size);
 }
 
-void TGFXBaseView::setMaxTileCount(int count, int drawIndex) {
-  const std::string& drawerName = getDrawerName(drawIndex);
+void TGFXBaseView::setMaxTileCount(int count) {
+  const std::string& drawerName = getDrawerName(lastDrawIndex);
   auto drawer = drawers::Drawer::GetByName(drawerName);
   if (!drawer) {
     return;
   }
   drawer->displayList.setMaxTileCount(count);
 }
-std::vector<std::string> TGFXBaseView::getDrawerNames()  {
-  return drawers::Drawer::Names();
+std::vector<std::string> TGFXBaseView::getDrawerNames() {
+  auto names = drawers::Drawer::Names();
+  return names;
 }
 std::string TGFXBaseView::getDrawerName(int index) {
   auto drawerNames = getDrawerNames();

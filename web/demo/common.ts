@@ -17,7 +17,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////
 import {TGFXBind} from '../lib/tgfx';
 import * as types from '../types/types';
-import { gestureManager, initMouseEvents } from './mouseEvent';
+import {gestureManager, initMouseEvents} from './mouseEvent';
 
 export function loadImage(src: string): Promise<HTMLImageElement> {
     return new Promise((resolve, reject) => {
@@ -27,6 +27,7 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
         img.src = src;
     });
 }
+
 // 静态资源配置
 let STATIC_RESOURCE_BASE = '/static/resources';
 let ASSETS_BASE = '/static/resources/assets';
@@ -43,10 +44,14 @@ if (typeof window !== 'undefined' && (window as any).STATIC_CONFIG) {
 export class TGFXBaseView {
     public updateSize: (devicePixelRatio: number) => void;
     public draw: (drawIndex: number, zoom: number, offsetX: number, offsetY: number) => boolean;
-    public setAllowBlur: (allowBlur: boolean,drawIndex:number) => void;
+    public setAllowBlur: (allowBlur: boolean) => void;
     public setShowDirtyRect: (isVisible: boolean) => void;
     public getDrawerNames: () => Promise<any>;
-    public setImagePath: (name: string, imagePath: string) => void;
+    public setImage: (name: string, image: HTMLImageElement) => void;
+    public setTileSize: (size: number) => void;
+    public setMaxTileCount: (count: number) => void;
+    public registerFonts: (fontVal: Uint8Array, emojiFontVal: Uint8Array) => void;
+    public setRenderMode: (mode: number) => void;
 }
 
 export class ShareData {
@@ -226,7 +231,7 @@ export function initApp() {
         tileSizeSelect.addEventListener('change', () => {
             const tileSize = parseInt(tileSizeSelect.value);
             console.log(`Setting tile size to: ${tileSize} for drawer index: ${shareData.drawIndex}`);
-            shareData.tgfxBaseView.setTileSize(tileSize, shareData.drawIndex);
+            shareData.tgfxBaseView.setTileSize(tileSize);
             shareData.forceRedraw = true;
             draw(shareData);
         });
@@ -238,7 +243,7 @@ export function initApp() {
         maxTileCount.addEventListener('change', () => {
             const count = parseInt(maxTileCount.value);
             console.log(`Setting max tile count to: ${count} for drawer index: ${shareData.drawIndex}`);
-            shareData.tgfxBaseView.setMaxTileCount(count, shareData.drawIndex);
+            shareData.tgfxBaseView.setMaxTileCount(count);
             shareData.forceRedraw = true;
             draw(shareData);
         });
@@ -249,7 +254,7 @@ export function initApp() {
     if (allowBlur && shareData.tgfxBaseView) {
         allowBlur.addEventListener('change', () => {
             const allow = allowBlur.value === 'true';
-            shareData.tgfxBaseView.setAllowBlur(allow, shareData.drawIndex);
+            shareData.tgfxBaseView.setAllowBlur(allow);
             shareData.forceRedraw = true;
             draw(shareData);
         });
@@ -273,14 +278,14 @@ export function initApp() {
                 // 计算画布在视口中的中心点（考虑所有布局偏移）
                 const viewportCenterX = rect.left + rect.width / 2;
                 const viewportCenterY = rect.top + rect.height / 2;
-                
+
                 // 转换为画布坐标系中的点（考虑devicePixelRatio）
                 const canvasCenterX = (viewportCenterX - rect.left) * window.devicePixelRatio;
                 const canvasCenterY = (viewportCenterY - rect.top) * window.devicePixelRatio;
-                
+
                 // 计算新的zoom比例
                 const newZoom = val / 100;
-                
+
                 // 以画布中心点为基准调整offset
                 shareData.offsetX = (shareData.offsetX - canvasCenterX) * (newZoom / shareData.zoom) + canvasCenterX;
                 shareData.offsetY = (shareData.offsetY - canvasCenterY) * (newZoom / shareData.zoom) + canvasCenterY;
@@ -374,7 +379,7 @@ let lastDrawState = {
 
 async function draw(shareData: ShareData): Promise<void> {
     if (!canDraw || !shareData.isPageVisible) return;
-    
+
     // 检查是否需要强制重绘
     if (shareData.forceRedraw) {
         shareData.forceRedraw = false;
@@ -385,14 +390,14 @@ async function draw(shareData: ShareData): Promise<void> {
             offsetY: -1
         };
     }
-    
+
     const currentState = {
         index: shareData.drawIndex,
         zoom: shareData.zoom,
         offsetX: shareData.offsetX,
         offsetY: shareData.offsetY
     };
-    
+
     if (JSON.stringify(currentState) === JSON.stringify(lastDrawState)) {
         return;
     }
@@ -406,14 +411,13 @@ async function draw(shareData: ShareData): Promise<void> {
     //复用代码优化
 
 
-
     canDraw = false;
     lastDrawState = {...drawState};
 
     const retryDraw = async () => {
         let result = false;
         let retryCount = 0;
-        
+
         while (!result && retryCount < 3) {
             try {
                 result = shareData.tgfxBaseView.draw(
@@ -422,7 +426,7 @@ async function draw(shareData: ShareData): Promise<void> {
                     drawState.offsetX,
                     drawState.offsetY
                 );
-                
+
                 if (!result) {
                     retryCount++;
                     await new Promise(resolve => setTimeout(resolve, 100));
@@ -434,7 +438,7 @@ async function draw(shareData: ShareData): Promise<void> {
         }
         return result;
     };
-    
+
     try {
         const result = await retryDraw();
         canDraw = result;
@@ -464,42 +468,42 @@ export function updateSize(shareData: ShareData) {
     //防御下述两个为空
     const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
     const container = document.getElementById('container') as HTMLDivElement;
-    
+
     const style = window.getComputedStyle(container);
     // 最小尺寸保护，防止容器过小导致渲染异常
     const MIN_CONTAINER_WIDTH = 50;
     const MIN_CONTAINER_HEIGHT = 50;
-    
+
     // 计算容器有效尺寸，确保不小于最小值
-    const width = Math.max(MIN_CONTAINER_WIDTH, 
-                         container.clientWidth 
-                        - parseFloat(style.paddingLeft)
-                        - parseFloat(style.paddingRight)
-                        - parseFloat(style.borderLeftWidth)
-                        - parseFloat(style.borderRightWidth));
-    
+    const width = Math.max(MIN_CONTAINER_WIDTH,
+        container.clientWidth
+        - parseFloat(style.paddingLeft)
+        - parseFloat(style.paddingRight)
+        - parseFloat(style.borderLeftWidth)
+        - parseFloat(style.borderRightWidth));
+
     const height = Math.max(MIN_CONTAINER_HEIGHT,
-                          container.clientHeight
-                         - parseFloat(style.paddingTop)
-                         - parseFloat(style.paddingBottom)
-                         - parseFloat(style.borderTopWidth)
-                         - parseFloat(style.borderBottomWidth));
-    
+        container.clientHeight
+        - parseFloat(style.paddingTop)
+        - parseFloat(style.paddingBottom)
+        - parseFloat(style.borderTopWidth)
+        - parseFloat(style.borderBottomWidth));
+
     const scaleFactor = Math.max(1, Math.floor(window.devicePixelRatio * 100) / 100);
     // 确保最终渲染尺寸不小于1像素
     const newWidth = Math.max(1, Math.floor(width * scaleFactor));
     const newHeight = Math.max(1, Math.floor(height * scaleFactor));
     //解决magic number问题
-    
+
     const widthChanged = Math.abs(canvas.width - newWidth) > canvas.width * 0.001;
     const heightChanged = Math.abs(canvas.height - newHeight) > canvas.height * 0.001;
-    
+
     if (widthChanged || heightChanged) {
         canvas.width = newWidth;
         canvas.height = newHeight;
         canvas.style.width = width + "px";
         canvas.style.height = height + "px";
-        
+
         shareData.tgfxBaseView.updateSize(scaleFactor);
         requestAnimationFrame(() => draw(shareData));
     }
@@ -529,10 +533,10 @@ export function animationLoop(shareData: ShareData) {
             await draw(shareData).catch(e => console.error('Drawing failed:', e));
             lastRenderTime = now;
         }
-        
+
         shareData.animationFrameId = requestAnimationFrame(frame);
     };
-    
+
     if (!shareData.animationFrameId) {
         shareData.animationFrameId = requestAnimationFrame(frame);
     }
@@ -627,11 +631,11 @@ export async function loadModule(engineDir: string = "displaylist", type: string
     try {
         shareData.DisplaylistModule = await Displaylist.default(moduleConfig);
         TGFXBind(shareData.DisplaylistModule);
-        
+
         if (!shareData.DisplaylistModule.TGFXThreadsView) {
             throw new Error('WASM module not initialized correctly, missing TGFXThreadsView');
         }
-        
+
         const tgfxView = shareData.DisplaylistModule.TGFXThreadsView.MakeFrom('#displaylist');
         if (!tgfxView) {
             throw new Error('Failed to create TGFX view');
@@ -643,7 +647,6 @@ export async function loadModule(engineDir: string = "displaylist", type: string
     }
     const drawerNames = await shareData.tgfxBaseView.getDrawerNames();
     shareData.drawerNames = [];
-    
     if (drawerNames && typeof drawerNames.size === 'function') {
         for (let i = 0; i < drawerNames.size(); i++) {
             shareData.drawerNames.push(drawerNames.get(i));
@@ -651,25 +654,25 @@ export async function loadModule(engineDir: string = "displaylist", type: string
     } else if (Array.isArray(drawerNames)) {
         shareData.drawerNames = drawerNames;
     }
-    
+
     console.log('Drawer names loaded:', shareData.drawerNames);
 
     try {
         // 使用配置的静态资源路径
         const image1 = await loadImage(`${ASSETS_BASE}/bridge.jpg`);
-        shareData.tgfxBaseView.setImageRef("bridge", image1);
-        
+        shareData.tgfxBaseView.setImage("bridge", image1);
+
         const image2 = await loadImage(`${ASSETS_BASE}/tgfx.png`);
-        shareData.tgfxBaseView.setImageRef("TGFX", image2);
-        
+        shareData.tgfxBaseView.setImage("TGFX", image2);
+
         const fontPath = `${FONT_BASE}/NotoSansSC-Regular.otf`;
         const fontBuffer = await fetch(fontPath).then((response) => response.arrayBuffer());
         const fontUIntArray = new Uint8Array(fontBuffer);
-        
+
         const emojiFontPath = `${FONT_BASE}/NotoColorEmoji.ttf`;
         const emojiFontBuffer = await fetch(emojiFontPath).then((response) => response.arrayBuffer());
         const emojiFontUIntArray = new Uint8Array(emojiFontBuffer);
-        
+
         shareData.tgfxBaseView.registerFonts(fontUIntArray, emojiFontUIntArray);
     } catch (e) {
         console.error('Resource loading failed:', e);
@@ -687,11 +690,11 @@ export async function loadModule(engineDir: string = "displaylist", type: string
         offsetX: -1,
         offsetY: -1
     };
-    
+
     // 初始化鼠标事件
     const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
     initMouseEvents(canvas, shareData);
-    
+
     // 绑定zoom变化事件
     gestureManager.onZoomChange((zoom) => {
         const zoomValue = document.getElementById('zoomValue');
@@ -699,7 +702,7 @@ export async function loadModule(engineDir: string = "displaylist", type: string
             zoomValue.textContent = `${Math.round(zoom * 100)}%`;
         }
     });
-    
+
     updateSize(shareData);
     animationLoop(shareData);
     setupVisibilityListeners(shareData);
@@ -714,15 +717,15 @@ export function bindEventListeners() {
             let modeValue = 0; // 0=Direct, 1=Partial, 2=Tiled
             if (mode === 'partial') modeValue = 1;
             else if (mode === 'tile') modeValue = 2;
-            
-            shareData.tgfxBaseView.setRenderMode(modeValue, shareData.drawIndex);
-            
+
+            shareData.tgfxBaseView.setRenderMode(modeValue);
+
             // 如果是瓦片模式，显示额外选项
             const tileOptions = document.getElementById('tileOptions');
             if (tileOptions) {
                 tileOptions.classList.toggle('hidden', mode !== 'tile');
             }
-            
+
             shareData.forceRedraw = true;
             draw(shareData);
         });
@@ -732,22 +735,22 @@ export function bindEventListeners() {
     const showDirtyRect = document.getElementById('showDirtyRect') as HTMLSelectElement | null;
     if (showDirtyRect && shareData.tgfxBaseView) {
         // 初始设置为false
-        shareData.tgfxBaseView.setShowDirtyRect(false, shareData.drawIndex);
+        shareData.tgfxBaseView.setShowDirtyRect(false);
         showDirtyRect.value = 'false'; // 确保UI状态同步
-        
+
         // 切换测试用例时重置脏矩形显示状态
         const fileSelect = document.getElementById('fileSelect');
         if (fileSelect) {
             fileSelect.addEventListener('change', () => {
-                shareData.tgfxBaseView.setShowDirtyRect(false, shareData.drawIndex);
+                shareData.tgfxBaseView.setShowDirtyRect(false);
                 showDirtyRect.value = 'false';
             });
         }
-        
+
         showDirtyRect.addEventListener('change', () => {
             const show = showDirtyRect.value === 'true';
-            shareData.tgfxBaseView.setShowDirtyRect(show, shareData.drawIndex);
-            
+            shareData.tgfxBaseView.setShowDirtyRect(show);
+
             shareData.forceRedraw = true; // 设置强制重绘标志
             draw(shareData); // 触发重绘
         });
@@ -760,22 +763,22 @@ export function bindEventListeners() {
                 const prevIndex = shareData.drawIndex;
                 const prevName = shareData.drawerNames[prevIndex];
                 const newName = shareData.drawerNames[selectedIndex];
-                
+
                 console.log(`Switched drawer: from ${prevName} (index:${prevIndex}) to ${newName} (index:${selectedIndex})`);
-                
+
                 if (selectedIndex !== prevIndex) {
                     shareData.drawIndex = selectedIndex;
                     shareData.zoom = 1.0;
                     shareData.offsetX = 0;
                     shareData.offsetY = 0;
-                    
+
                     // 更新zoom显示
                     const zoomValue = document.getElementById('zoomValue');
                     if (zoomValue) {
                         zoomValue.textContent = '100%';
                     }
-                
-                draw(shareData);
+
+                    draw(shareData);
                 }
             }
         });

@@ -24,17 +24,15 @@ using namespace emscripten;
 EMSCRIPTEN_BINDINGS(TGFXDemo) {
 
   class_<TGFXBaseView>("TGFXBaseView")
-      .function("setImagePath", &TGFXBaseView::setImagePath)
+      .function("setImage", &TGFXBaseView::setImage)
       .function("updateSize", &TGFXBaseView::updateSize)
       .function("draw", &TGFXBaseView::draw)
       .function("setAllowBlur", &TGFXBaseView::setAllowBlur)
       .function("getDrawerNames", &TGFXBaseView::getDrawerNames)
-      .function("setImageRef", &TGFXBaseView::setImageRef)
       .function("setRenderMode", &TGFXBaseView::setRenderMode)
       .function("setTileSize", &TGFXBaseView::setTileSize)
       .function("setMaxTileCount", &TGFXBaseView::setMaxTileCount)
       .function("setShowDirtyRect", &TGFXBaseView::setShowDirtyRect);
-
 
   class_<TGFXThreadsView, base<TGFXBaseView>>("TGFXThreadsView")
       .smart_ptr<std::shared_ptr<TGFXThreadsView>>("TGFXThreadsView")

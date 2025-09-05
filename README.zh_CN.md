@@ -1,7 +1,6 @@
 [English](./README.md) | 简体中文
 
 ## 介绍
-***
 
 该项目展示了 [tgfx-layers](https://github.com/Tencent/tgfx/tree/main/include/tgfx/layers) 模块的渲染能力，包括先进的缓存机制，如脏矩形刷新和瓦片渲染。
 它支持构建复杂的大型图层渲染树，供用户进行拖拽、缩放、点选、旋转等交互操作。该项目能够直观地展示 [tgfx-layers](https://github.com/Tencent/tgfx/tree/main/include/tgfx/layers) 模块的具体用法及性能水平。
@@ -9,7 +8,6 @@
 您还可以在线运行 [tgfx-displaylist](https://tgfx.org/displaylist) ，真实体验 [tgfx-layers](https://github.com/Tencent/tgfx/tree/main/include/tgfx/layers) 的渲染能力。
 
 ## 快速接入
-***
 
 在构建项目之前，请仔细阅读并遵循以下内容中的说明：[**构建前提条件**](https://github.com/Tencent/tgfx?tab=readme-ov-file#build-prerequisites) 和 [**依赖项**](https://github.com/Tencent/tgfx?tab=readme-ov-file#dependencies) 部分。这些将引导您完成设置开发环境所需的步骤。
 

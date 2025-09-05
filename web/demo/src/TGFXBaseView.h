@@ -25,21 +25,18 @@ class TGFXBaseView {
  public:
   TGFXBaseView(const std::string& canvasID);
 
-  void setImagePath(const std::string& name, const std::string& imagePath);
-
-  void setImageRef(const std::string& name, emscripten::val imageRef);
-
+  void setImage(const std::string& name, tgfx::NativeImageRef nativeImage);
 
   bool updateSize(float devicePixelRatio);
 
   bool draw(int drawIndex, float zoom, float offsetX, float offsetY);
 
-  void setAllowBlur(bool allowBlur, int drawIndex = 0);
+  void setAllowBlur(bool allowBlur);
 
-  void setShowDirtyRect(bool isVisible, int drawIndex = 0);
-  void setRenderMode(int mode, int drawIndex = 0);
-  void setTileSize(int size, int drawIndex = 0);
-  void setMaxTileCount(int count, int drawIndex = 0);
+  void setShowDirtyRect(bool isVisible);
+  void setRenderMode(int mode);
+  void setTileSize(int size);
+  void setMaxTileCount(int count);
 
   std::vector<std::string> getDrawerNames();
   std::string getDrawerName(int index);
@@ -47,18 +44,18 @@ class TGFXBaseView {
  protected:
   std::shared_ptr<drawers::AppHost> appHost;
   std::shared_ptr<tgfx::WebGLWindow> window;
-  
-  int width() const { 
+
+  int width() const {
     int w = 0, h = 0;
     emscripten_get_canvas_element_size(canvasID.c_str(), &w, &h);
     return w;
   }
-  int height() const { 
+  int height() const {
     int w = 0, h = 0;
     emscripten_get_canvas_element_size(canvasID.c_str(), &w, &h);
     return h;
   }
-  
+
   int lastDrawIndex = -1;
   float lastZoom = 0;
   float lastOffsetX = 0;
