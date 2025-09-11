@@ -19,6 +19,8 @@
 #include <emscripten/bind.h>
 #include "drawers/Drawer.h"
 #include "tgfx/gpu/opengl/webgl/WebGLWindow.h"
+#include "tgfx/layers/ShapeLayer.h"
+#include "tgfx/layers/SolidColor.h"
 
 namespace displaylist {
 class TGFXBaseView {
@@ -39,7 +41,14 @@ class TGFXBaseView {
   void setMaxTileCount(int count);
 
   std::vector<std::string> getDrawerNames();
-  std::string getDrawerName(int index);
+
+  bool highlightLayerAndCheckRedraw(float x, float y);
+
+  bool resetHighlightLayer();
+
+  bool selectMoveLayer(float pointX, float pointY);
+
+  bool moveHighlightLayer(float deltaX, float deltaY);
 
  protected:
   std::shared_ptr<drawers::AppHost> appHost;
@@ -63,5 +72,12 @@ class TGFXBaseView {
 
  private:
   std::string canvasID = "";
+
+  std::shared_ptr<tgfx::Layer> latestHighlightedLayer = nullptr;
+  int highLightLayerIndex = -1;
+
+  std::vector<std::shared_ptr<tgfx::ShapeStyle>> strokeStyles = {};
+
+  std::shared_ptr<tgfx::Layer> moveLayer = nullptr;
 };
 }  // namespace displaylist

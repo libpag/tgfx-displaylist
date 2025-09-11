@@ -32,7 +32,11 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("setRenderMode", &TGFXBaseView::setRenderMode)
       .function("setTileSize", &TGFXBaseView::setTileSize)
       .function("setMaxTileCount", &TGFXBaseView::setMaxTileCount)
-      .function("setShowDirtyRect", &TGFXBaseView::setShowDirtyRect);
+      .function("setShowDirtyRect", &TGFXBaseView::setShowDirtyRect)
+      .function("highlightLayerAndCheckRedraw", &TGFXBaseView::highlightLayerAndCheckRedraw)
+      .function("resetHighlightLayer", &TGFXBaseView::resetHighlightLayer)
+      .function("selectMoveLayer", &TGFXBaseView::selectMoveLayer)
+      .function("moveHighlightLayer", &TGFXBaseView::moveHighlightLayer);
 
   class_<TGFXThreadsView, base<TGFXBaseView>>("TGFXThreadsView")
       .smart_ptr<std::shared_ptr<TGFXThreadsView>>("TGFXThreadsView")

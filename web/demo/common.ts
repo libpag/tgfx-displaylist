@@ -52,6 +52,10 @@ export class TGFXBaseView {
     public setMaxTileCount: (count: number) => void;
     public registerFonts: (fontVal: Uint8Array, emojiFontVal: Uint8Array) => void;
     public setRenderMode: (mode: number) => void;
+    public highlightLayerAndCheckRedraw: (x: number, y: number) => boolean;
+    public resetHighlightLayer: () => boolean;
+    public selectMoveLayer: (pointX: number, point: number) => boolean;
+    public moveHighlightLayer: (deltaX: number, deltaY: number) => boolean;
 }
 
 export class ShareData {
@@ -377,7 +381,7 @@ let lastDrawState = {
 };
 
 
-async function draw(shareData: ShareData): Promise<void> {
+export async function draw(shareData: ShareData): Promise<void> {
     if (!canDraw || !shareData.isPageVisible) return;
 
     // 检查是否需要强制重绘
@@ -530,7 +534,9 @@ export function animationLoop(shareData: ShareData) {
                 };
                 canDraw = true;
             }
-            await draw(shareData).catch(e => console.error('Drawing failed:', e));
+            setTimeout(() => {
+                draw(shareData).catch(e => console.error('Drawing failed:', e));
+            }, 0);
             lastRenderTime = now;
         }
 

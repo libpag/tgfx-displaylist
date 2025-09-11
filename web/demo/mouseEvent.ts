@@ -1,8 +1,9 @@
 // mouseEvent.ts
-import { TGFXBaseView, ShareData } from './common';
+import {TGFXBaseView, ShareData, shareData, draw} from './common';
 
 const MIN_ZOOM = 0.01;
 const MAX_ZOOM = 1000.0;
+
 enum ScaleGestureState {
     SCALE_START = 0,
     SCALE_CHANGE = 1,
@@ -18,6 +19,70 @@ enum ScrollGestureState {
 enum DeviceType {
     TOUCH = 0,
     MOUSE = 1,
+}
+
+let isMouseDown = false;  // 标记鼠标是否按下
+let hasMoved = false;     // 标记鼠标是否移动
+
+let lastPointX = 0;
+let lastPointY = 0;
+
+function ThrottleWithTrailing(delay: number) {
+    return function (
+        target: Object,
+        propertyKey: string | symbol,
+        descriptor: PropertyDescriptor
+    ): PropertyDescriptor {
+        const originalMethod = descriptor.value;
+
+        let lastExecutionTime = 0;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        let lastArgs: any[] | null = null;
+        let lastThis: any = null;
+
+        const invoke = () => {
+            lastExecutionTime = Date.now();
+            timeoutId = null;
+            originalMethod.apply(lastThis, lastArgs);
+            lastArgs = null;
+            lastThis = null;
+        };
+
+        descriptor.value = function (...args: any[]) {
+            const now = Date.now();
+
+            if (now - lastExecutionTime >= delay) {
+                lastExecutionTime = now;
+                originalMethod.apply(this, args);
+            } else {
+                lastArgs = args;
+                lastThis = this;
+
+                if (!timeoutId) {
+                    const remainingTime = delay - (now - lastExecutionTime);
+                    timeoutId = setTimeout(invoke, remainingTime);
+                }
+            }
+        };
+
+        return descriptor;
+    };
+}
+
+function ConvertCoordinates(e: MouseEvent, showSideBar = true) {
+    let sidebarWidth = 0;
+    let offsetX = 0;
+    let offsetY = 0;
+    if (showSideBar) {
+        const sidebar = document.getElementById('sidebar');
+        sidebarWidth = sidebar ? sidebar.clientWidth : 0;
+        offsetX = sidebarWidth;
+    }
+
+    return {
+        clientX: (e.clientX - offsetX) * window.devicePixelRatio,
+        clientY: (e.clientY - offsetY) * window.devicePixelRatio
+    };
 }
 
 export type ZoomChangeCallback = (zoom: number) => void;
@@ -154,6 +219,80 @@ export class GestureManager {
             this.handleScaleEvent(event, ScaleGestureState.SCALE_CHANGE, canvas, shareData, deviceType);
         }
     }
+
+    // @ts-ignore
+    // @ThrottleWithTrailing(100)
+    public async onMouseMove(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
+        if (isMouseDown) {
+            hasMoved = true;  // 如果鼠标按下了并且发生了移动
+
+            const clientXY = ConvertCoordinates(event);
+            const deltaX = clientXY.clientX - lastPointX;
+            const deltaY = clientXY.clientY - lastPointY;
+
+            if (shareData.tgfxBaseView.moveHighlightLayer(deltaX, deltaY)) {
+                shareData.forceRedraw = true;
+                await draw(shareData)
+                console.log("如果鼠标按下了并且发生了移动");
+                lastPointX = clientXY.clientX;
+                lastPointY = clientXY.clientY;
+                shareData.forceRedraw = true;
+                await draw(shareData);
+            }
+
+            return;
+        }
+        const clientXY = ConvertCoordinates(event);
+        const reDraw = shareData.tgfxBaseView.highlightLayerAndCheckRedraw(clientXY.clientX, clientXY.clientY);
+        if (!reDraw) {
+            return;
+        } else {
+            shareData.forceRedraw = true;
+            // requestAnimationFrame(() => draw(shareData));
+            await draw(shareData)
+        }
+    }
+
+    public onMouseLeave(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
+        console.log('鼠标离开 canvas');
+    }
+
+    public async onMouseDown(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
+        console.log('鼠标单击 canvas且没有释放');
+        if (event.button === 0) {  // 判断是否为左键
+            const clientXY = ConvertCoordinates(event);
+            shareData.tgfxBaseView.resetHighlightLayer();
+            shareData.forceRedraw = true;
+            await draw(shareData);
+            if (shareData.tgfxBaseView.selectMoveLayer(clientXY.clientX, clientXY.clientY)) {
+                lastPointX = clientXY.clientX;
+                lastPointY = clientXY.clientY;
+                isMouseDown = true;
+                hasMoved = false;  // 鼠标刚按下，假设没有移动
+            }
+        }
+    }
+
+    public onMouseUp(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
+        if (event.button === 0) {  // 判断是否为左键
+            if (!hasMoved) {
+                console.log('鼠标左键单击后弹起，未移动鼠标');
+            } else {
+                console.log('鼠标左键单击后弹起，并且移动鼠标');
+            }
+            isMouseDown = false;
+            hasMoved = false;
+        }
+    }
+
+    public async onClick(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
+        console.log('canvas 被点击', event.clientX, event.clientY);
+        const clientXY = ConvertCoordinates(event);
+        shareData.tgfxBaseView.resetHighlightLayer();
+
+        shareData.forceRedraw = true;
+        await draw(shareData);
+    }
 }
 
 // 导出GestureManager实例
@@ -164,5 +303,25 @@ export function initMouseEvents(canvas: HTMLElement, shareData: ShareData) {
     canvas.addEventListener('wheel', (event: WheelEvent) => {
         event.preventDefault();
         gestureManager.onWheel(event, canvas, shareData);
+    });
+
+    canvas.addEventListener('mousemove', (event: MouseEvent) => {
+        gestureManager.onMouseMove(event, canvas, shareData);
+    });
+
+    canvas.addEventListener('mouseleave', (event: MouseEvent) => {
+        gestureManager.onMouseLeave(event, canvas, shareData);
+    });
+
+    canvas.addEventListener('mousedown', (event: MouseEvent) => {
+        gestureManager.onMouseDown(event, canvas, shareData);
+    });
+
+    canvas.addEventListener('mouseup', (event: MouseEvent) => {
+        gestureManager.onMouseUp(event, canvas, shareData);
+    });
+
+    canvas.addEventListener('click', (event: MouseEvent) => {
+        gestureManager.onClick(event, canvas, shareData);
     });
 }
