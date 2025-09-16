@@ -58,4 +58,4 @@ endif ()
 
 target_compile_options(displaylist PUBLIC ${DISPLAYLIST_COMPILE_OPTIONS})
 target_link_options(displaylist PUBLIC ${DISPLAYLIST_LINK_OPTIONS})
-target_link_libraries(displaylist tgfx-drawers tgfx)
+target_link_libraries(displaylist tgfx-hello2d tgfx)

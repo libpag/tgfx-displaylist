@@ -11,10 +11,10 @@
         "dir": "third_party/vendor_tools"
       },
       {
-        "url": "https://github.com/djh-greener/tgfx.git",
-        "commit": "b623b4ce209898c834c1fab83d3dada3be291074",
+        "url": "https://github.com/Tencent/tgfx.git",
+        "commit": "feature/ashstarli_hello2d",
         "dir": "third_party/tgfx"
-      }
+      } 
     ]
   },
   "actions": {

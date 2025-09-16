@@ -15,6 +15,7 @@
 //  and limitations under the license.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////////
+
 import {TGFXBind} from '../lib/tgfx';
 import * as types from '../types/types';
 import {gestureManager, initMouseEvents} from './mouseEvent';
@@ -33,7 +34,7 @@ let STATIC_RESOURCE_BASE = '/static/resources';
 let ASSETS_BASE = '/static/resources/assets';
 let FONT_BASE = '/static/resources/font';
 
-// 如果需要CDN部署，可以通过全局变量覆盖这些值/不确定对不对
+// 如果需要CDN部署，可以通过全局变量覆盖这些值
 if (typeof window !== 'undefined' && (window as any).STATIC_CONFIG) {
     const config = (window as any).STATIC_CONFIG;
     if (config.STATIC_RESOURCE_BASE) STATIC_RESOURCE_BASE = config.STATIC_RESOURCE_BASE;
@@ -54,8 +55,9 @@ export class TGFXBaseView {
     public setRenderMode: (mode: number) => void;
     public highlightLayerAndCheckRedraw: (x: number, y: number) => boolean;
     public resetHighlightLayer: () => boolean;
-    public selectMoveLayer: (pointX: number, point: number) => boolean;
+    public selectMoveLayer: (pointX: number, pointY: number) => boolean;
     public moveHighlightLayer: (deltaX: number, deltaY: number) => boolean;
+    public markDirty: () => void;
 }
 
 export class ShareData {
@@ -70,7 +72,6 @@ export class ShareData {
     public resized: boolean = true;
     public updateSizeTimer: number | null = null;
     public drawerNames: string[] = [];
-    public forceRedraw: boolean = false; // 新增强制重绘标志
 }
 
 export let shareData: ShareData;
@@ -152,11 +153,9 @@ function applyInitialLanguage() {
 function updateTexts() {
     const langToUse = currentLang === 'auto' ? detectBrowserLanguage() : currentLang;
     const lang = translations[langToUse];
-    //const lang = translations[langToUse] || translations[DEFAULT_LANGUAGE];
 
     document.querySelectorAll<HTMLElement>('[data-translate]').forEach(el => {
         const key = el.getAttribute('data-translate');
-        //防御 lang 不存在或没定义
         if (key && lang[key]) {
             if (el instanceof HTMLInputElement && el.type === 'checkbox' && el.nextElementSibling) {
                 (el.nextElementSibling as HTMLElement).textContent = lang[key];
@@ -216,53 +215,6 @@ export function initApp() {
             draw(shareData);
         }
     }
-    const addChangeListener = (id: string) => {
-        const element = document.getElementById(id);
-        if (element) {
-            element.addEventListener('change', () => {
-                document.dispatchEvent(new Event('change'));
-            });
-        }
-    };
-
-    addChangeListener('fileSelect');
-    addChangeListener('tileSizeSelect');
-    addChangeListener('allowBlur');
-
-    // 瓦片大小设置
-    const tileSizeSelect = document.getElementById('tileSizeSelect') as HTMLSelectElement | null;
-    if (tileSizeSelect && shareData.tgfxBaseView) {
-        tileSizeSelect.addEventListener('change', () => {
-            const tileSize = parseInt(tileSizeSelect.value);
-            console.log(`Setting tile size to: ${tileSize} for drawer index: ${shareData.drawIndex}`);
-            shareData.tgfxBaseView.setTileSize(tileSize);
-            shareData.forceRedraw = true;
-            draw(shareData);
-        });
-    }
-
-    // 最大瓦片数设置
-    const maxTileCount = document.getElementById('maxTileCount') as HTMLInputElement | null;
-    if (maxTileCount && shareData.tgfxBaseView) {
-        maxTileCount.addEventListener('change', () => {
-            const count = parseInt(maxTileCount.value);
-            console.log(`Setting max tile count to: ${count} for drawer index: ${shareData.drawIndex}`);
-            shareData.tgfxBaseView.setMaxTileCount(count);
-            shareData.forceRedraw = true;
-            draw(shareData);
-        });
-    }
-
-    // 允许模糊设置
-    const allowBlur = document.getElementById('allowBlur') as HTMLSelectElement | null;
-    if (allowBlur && shareData.tgfxBaseView) {
-        allowBlur.addEventListener('change', () => {
-            const allow = allowBlur.value === 'true';
-            shareData.tgfxBaseView.setAllowBlur(allow);
-            shareData.forceRedraw = true;
-            draw(shareData);
-        });
-    }
 
     let currentZoom = 100;
     const zoomInput = document.getElementById('zoomInput') as HTMLInputElement | null;
@@ -279,32 +231,19 @@ export function initApp() {
             const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
             if (canvas) {
                 const rect = canvas.getBoundingClientRect();
-                // 计算画布在视口中的中心点（考虑所有布局偏移）
                 const viewportCenterX = rect.left + rect.width / 2;
                 const viewportCenterY = rect.top + rect.height / 2;
-
-                // 转换为画布坐标系中的点（考虑devicePixelRatio）
                 const canvasCenterX = (viewportCenterX - rect.left) * window.devicePixelRatio;
                 const canvasCenterY = (viewportCenterY - rect.top) * window.devicePixelRatio;
-
-                // 计算新的zoom比例
                 const newZoom = val / 100;
-
-                // 以画布中心点为基准调整offset
                 shareData.offsetX = (shareData.offsetX - canvasCenterX) * (newZoom / shareData.zoom) + canvasCenterX;
                 shareData.offsetY = (shareData.offsetY - canvasCenterY) * (newZoom / shareData.zoom) + canvasCenterY;
                 shareData.zoom = newZoom;
             } else {
                 shareData.zoom = val / 100;
             }
-            lastDrawState = {
-                index: -1,
-                zoom: -1,
-                offsetX: -1,
-                offsetY: -1
-            };
-            canDraw = true;
-            draw(shareData);
+            shareData.tgfxBaseView?.markDirty();
+            animationLoop(shareData);
         }
     };
 
@@ -367,90 +306,23 @@ export function initApp() {
     setZoom(100);
 }
 
-let canDraw = true;
-
-function isPromise(obj: any): obj is Promise<any> {
-    return !!obj && typeof obj.then === "function";
-}
-
-let lastDrawState = {
-    index: -1,
-    zoom: 0,
-    offsetX: 0,
-    offsetY: 0
-};
-
-
-export async function draw(shareData: ShareData): Promise<void> {
-    if (!canDraw || !shareData.isPageVisible) return;
-
-    // 检查是否需要强制重绘
-    if (shareData.forceRedraw) {
-        shareData.forceRedraw = false;
-        lastDrawState = {
-            index: -1,
-            zoom: -1,
-            offsetX: -1,
-            offsetY: -1
-        };
+// 简化的绘制函数，基于 AppHost 脏标记系统
+export function draw(shareData: ShareData): boolean {
+    if (!shareData.isPageVisible || !shareData.tgfxBaseView) {
+        return false;
     }
-
-    const currentState = {
-        index: shareData.drawIndex,
-        zoom: shareData.zoom,
-        offsetX: shareData.offsetX,
-        offsetY: shareData.offsetY
-    };
-
-    if (JSON.stringify(currentState) === JSON.stringify(lastDrawState)) {
-        return;
-    }
-
-    const drawState = {
-        index: shareData.drawIndex,
-        zoom: shareData.zoom,
-        offsetX: shareData.offsetX,
-        offsetY: shareData.offsetY
-    };
-    //复用代码优化
-
-
-    canDraw = false;
-    lastDrawState = {...drawState};
-
-    const retryDraw = async () => {
-        let result = false;
-        let retryCount = 0;
-
-        while (!result && retryCount < 3) {
-            try {
-                result = shareData.tgfxBaseView.draw(
-                    drawState.index,
-                    drawState.zoom,
-                    drawState.offsetX,
-                    drawState.offsetY
-                );
-
-                if (!result) {
-                    retryCount++;
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                }
-            } catch (e) {
-                console.error('Drawing error:', e);
-                break;
-            }
-        }
-        return result;
-    };
 
     try {
-        const result = await retryDraw();
-        canDraw = result;
-        return;
+        // 直接调用 draw 方法，让 AppHost 内部处理脏标记逻辑
+        return shareData.tgfxBaseView.draw(
+            shareData.drawIndex,
+            shareData.zoom,
+            shareData.offsetX,
+            shareData.offsetY
+        );
     } catch (e) {
-        console.error('WASM drawing failed:', e);
-        canDraw = true;
-        return;
+        console.error('Drawing error:', e);
+        return false;
     }
 }
 
@@ -460,25 +332,14 @@ export function updateSize(shareData: ShareData) {
         return;
     }
 
-    lastDrawState = {
-        index: -1,
-        zoom: -1,
-        offsetX: -1,
-        offsetY: -1
-    };
-    canDraw = true;
-
     shareData.resized = false;
-    //防御下述两个为空
     const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
     const container = document.getElementById('container') as HTMLDivElement;
 
     const style = window.getComputedStyle(container);
-    // 最小尺寸保护，防止容器过小导致渲染异常
     const MIN_CONTAINER_WIDTH = 50;
     const MIN_CONTAINER_HEIGHT = 50;
 
-    // 计算容器有效尺寸，确保不小于最小值
     const width = Math.max(MIN_CONTAINER_WIDTH,
         container.clientWidth
         - parseFloat(style.paddingLeft)
@@ -494,10 +355,8 @@ export function updateSize(shareData: ShareData) {
         - parseFloat(style.borderBottomWidth));
 
     const scaleFactor = Math.max(1, Math.floor(window.devicePixelRatio * 100) / 100);
-    // 确保最终渲染尺寸不小于1像素
     const newWidth = Math.max(1, Math.floor(width * scaleFactor));
     const newHeight = Math.max(1, Math.floor(height * scaleFactor));
-    //解决magic number问题
 
     const widthChanged = Math.abs(canvas.width - newWidth) > canvas.width * 0.001;
     const heightChanged = Math.abs(canvas.height - newHeight) > canvas.height * 0.001;
@@ -509,43 +368,38 @@ export function updateSize(shareData: ShareData) {
         canvas.style.height = height + "px";
 
         shareData.tgfxBaseView.updateSize(scaleFactor);
-        requestAnimationFrame(() => draw(shareData));
+        shareData.tgfxBaseView.markDirty();
+        animationLoop(shareData);
     }
 }
 
-let lastRenderTime = 0;
-const MIN_RENDER_INTERVAL = 1000 / 30;
+let animationLoopRunning = false;
 
+// 简化的动画循环，基于 AppHost 脏标记系统
 export function animationLoop(shareData: ShareData) {
-    const frame = async (timestamp: number) => {
+    if (animationLoopRunning) {
+        return;
+    }
+    animationLoopRunning = true;
+
+    const frame = () => {
         if (!shareData.tgfxBaseView || !shareData.isPageVisible) {
+            animationLoopRunning = false;
             shareData.animationFrameId = null;
             return;
         }
 
-        const now = performance.now();
-        if (now - lastRenderTime >= MIN_RENDER_INTERVAL || !shareData.isPageVisible) {
-            if (!shareData.isPageVisible) {
-                lastDrawState = {
-                    index: -1,
-                    zoom: -1,
-                    offsetX: -1,
-                    offsetY: -1
-                };
-                canDraw = true;
-            }
-            setTimeout(() => {
-                draw(shareData).catch(e => console.error('Drawing failed:', e));
-            }, 0);
-            lastRenderTime = now;
+        // 调用绘制函数，如果返回 true 表示有内容被绘制，继续循环
+        const hasDrawn = draw(shareData);
+        
+        if (hasDrawn) {
+            shareData.animationFrameId = requestAnimationFrame(frame);
+        } else {
+            animationLoopRunning = false;
+            shareData.animationFrameId = null;
         }
-
-        shareData.animationFrameId = requestAnimationFrame(frame);
     };
-
-    if (!shareData.animationFrameId) {
-        shareData.animationFrameId = requestAnimationFrame(frame);
-    }
+    shareData.animationFrameId = requestAnimationFrame(frame);
 }
 
 export function onResizeEvent(shareData: ShareData) {
@@ -689,13 +543,6 @@ export async function loadModule(engineDir: string = "displaylist", type: string
     shareData.zoom = 1.0;
     shareData.offsetX = 0;
     shareData.offsetY = 0;
-    canDraw = true;
-    lastDrawState = {
-        index: -1,
-        zoom: -1,
-        offsetX: -1,
-        offsetY: -1
-    };
 
     // 初始化鼠标事件
     const canvas = document.getElementById('displaylist') as HTMLCanvasElement;
@@ -715,54 +562,14 @@ export async function loadModule(engineDir: string = "displaylist", type: string
 }
 
 export function bindEventListeners() {
-    // 渲染模式切换
-    const renderModeSelect = document.getElementById('renderModeSelect') as HTMLSelectElement | null;
-    if (renderModeSelect && shareData.tgfxBaseView) {
-        renderModeSelect.addEventListener('change', () => {
-            const mode = renderModeSelect.value;
-            let modeValue = 0; // 0=Direct, 1=Partial, 2=Tiled
-            if (mode === 'partial') modeValue = 1;
-            else if (mode === 'tile') modeValue = 2;
-
-            shareData.tgfxBaseView.setRenderMode(modeValue);
-
-            // 如果是瓦片模式，显示额外选项
-            const tileOptions = document.getElementById('tileOptions');
-            if (tileOptions) {
-                tileOptions.classList.toggle('hidden', mode !== 'tile');
-            }
-
-            shareData.forceRedraw = true;
-            draw(shareData);
-        });
+    if (!shareData.tgfxBaseView) {
+        console.warn('TGFXBaseView not initialized, skipping event binding');
+        return;
     }
 
-    // 脏矩形显示切换
-    const showDirtyRect = document.getElementById('showDirtyRect') as HTMLSelectElement | null;
-    if (showDirtyRect && shareData.tgfxBaseView) {
-        // 初始设置为false
-        shareData.tgfxBaseView.setShowDirtyRect(false);
-        showDirtyRect.value = 'false'; // 确保UI状态同步
-
-        // 切换测试用例时重置脏矩形显示状态
-        const fileSelect = document.getElementById('fileSelect');
-        if (fileSelect) {
-            fileSelect.addEventListener('change', () => {
-                shareData.tgfxBaseView.setShowDirtyRect(false);
-                showDirtyRect.value = 'false';
-            });
-        }
-
-        showDirtyRect.addEventListener('change', () => {
-            const show = showDirtyRect.value === 'true';
-            shareData.tgfxBaseView.setShowDirtyRect(show);
-
-            shareData.forceRedraw = true; // 设置强制重绘标志
-            draw(shareData); // 触发重绘
-        });
-    }
+    // 文件选择切换
     const fileSelect = document.getElementById('fileSelect') as HTMLSelectElement | null;
-    if (fileSelect && shareData.tgfxBaseView) {
+    if (fileSelect) {
         fileSelect.addEventListener('change', () => {
             const selectedIndex = parseInt(fileSelect.value);
             if (!isNaN(selectedIndex) && selectedIndex >= 0 && selectedIndex < shareData.drawerNames.length) {
@@ -784,9 +591,89 @@ export function bindEventListeners() {
                         zoomValue.textContent = '100%';
                     }
 
-                    draw(shareData);
+                    // 重置脏矩形显示状态
+                    const showDirtyRect = document.getElementById('showDirtyRect') as HTMLSelectElement | null;
+                    if (showDirtyRect) {
+                        shareData.tgfxBaseView.setShowDirtyRect(false);
+                        showDirtyRect.value = 'false';
+                    }
+
+                    shareData.tgfxBaseView.markDirty();
+                    animationLoop(shareData);
                 }
             }
+        });
+    }
+
+    // 渲染模式切换
+    const renderModeSelect = document.getElementById('renderModeSelect') as HTMLSelectElement | null;
+    if (renderModeSelect) {
+        renderModeSelect.addEventListener('change', () => {
+            const mode = renderModeSelect.value;
+            let modeValue = 0; // 0=Direct, 1=Partial, 2=Tiled
+            if (mode === 'partial') modeValue = 1;
+            else if (mode === 'tile') modeValue = 2;
+
+            shareData.tgfxBaseView.setRenderMode(modeValue);
+
+            // 如果是瓦片模式，显示额外选项
+            const tileOptions = document.getElementById('tileOptions');
+            if (tileOptions) {
+                tileOptions.classList.toggle('hidden', mode !== 'tile');
+            }
+
+            shareData.tgfxBaseView.markDirty();
+            animationLoop(shareData);
+        });
+    }
+
+    // 瓦片大小设置
+    const tileSizeSelect = document.getElementById('tileSizeSelect') as HTMLSelectElement | null;
+    if (tileSizeSelect) {
+        tileSizeSelect.addEventListener('change', () => {
+            const tileSize = parseInt(tileSizeSelect.value);
+            console.log(`Setting tile size to: ${tileSize} for drawer index: ${shareData.drawIndex}`);
+            shareData.tgfxBaseView.setTileSize(tileSize);
+            shareData.tgfxBaseView.markDirty();
+            animationLoop(shareData);
+        });
+    }
+
+    // 最大瓦片数设置
+    const maxTileCount = document.getElementById('maxTileCount') as HTMLInputElement | null;
+    if (maxTileCount) {
+        maxTileCount.addEventListener('change', () => {
+            const count = parseInt(maxTileCount.value);
+            console.log(`Setting max tile count to: ${count} for drawer index: ${shareData.drawIndex}`);
+            shareData.tgfxBaseView.setMaxTileCount(count);
+            shareData.tgfxBaseView.markDirty();
+            animationLoop(shareData);
+        });
+    }
+
+    // 允许模糊设置
+    const allowBlur = document.getElementById('allowBlur') as HTMLSelectElement | null;
+    if (allowBlur) {
+        allowBlur.addEventListener('change', () => {
+            const allow = allowBlur.value === 'true';
+            shareData.tgfxBaseView.setAllowBlur(allow);
+            shareData.tgfxBaseView.markDirty();
+            animationLoop(shareData);
+        });
+    }
+
+    // 脏矩形显示切换
+    const showDirtyRect = document.getElementById('showDirtyRect') as HTMLSelectElement | null;
+    if (showDirtyRect) {
+        // 初始设置为false
+        shareData.tgfxBaseView.setShowDirtyRect(false);
+        showDirtyRect.value = 'false'; // 确保UI状态同步
+
+        showDirtyRect.addEventListener('change', () => {
+            const show = showDirtyRect.value === 'true';
+            shareData.tgfxBaseView.setShowDirtyRect(show);
+            shareData.tgfxBaseView.markDirty();
+            animationLoop(shareData);
         });
     }
 }

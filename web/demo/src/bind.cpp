@@ -36,7 +36,9 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("highlightLayerAndCheckRedraw", &TGFXBaseView::highlightLayerAndCheckRedraw)
       .function("resetHighlightLayer", &TGFXBaseView::resetHighlightLayer)
       .function("selectMoveLayer", &TGFXBaseView::selectMoveLayer)
-      .function("moveHighlightLayer", &TGFXBaseView::moveHighlightLayer);
+      .function("moveHighlightLayer", &TGFXBaseView::moveHighlightLayer)
+      .function("markDirty", &TGFXBaseView::markDirty)
+      .function("onWheelEvent", &TGFXBaseView::onWheelEvent);
 
   class_<TGFXThreadsView, base<TGFXBaseView>>("TGFXThreadsView")
       .smart_ptr<std::shared_ptr<TGFXThreadsView>>("TGFXThreadsView")

@@ -18,7 +18,7 @@
 #include "TGFXBaseView.h"
 #include <cmath>
 #include "TGFXBaseView.h"
-#include "drawers/Drawer.h"
+#include "hello2d/LayerBuilder.h"
 #include "tgfx/core/Point.h"
 #include "tgfx/layers/ImageLayer.h"
 #include "tgfx/layers/TextLayer.h"
@@ -27,7 +27,7 @@ using namespace emscripten;
 
 namespace displaylist {
 TGFXBaseView::TGFXBaseView(const std::string& canvasID) : canvasID(canvasID) {
-  appHost = std::make_shared<drawers::AppHost>();
+  appHost = std::make_shared<hello2d::AppHost>();
   lastDrawIndex = -1;
   lastZoom = 0;
   lastOffsetX = 0;
@@ -60,24 +60,24 @@ void TGFXBaseView::setImage(const std::string& name, tgfx::NativeImageRef native
 }
 
 bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY) {
-  if (window) {
-    auto device = window->getDevice();
-    if (!device || !device->lockContext()) {
-      window = nullptr;
-    } else {
-      device->unlock();
-    }
-  }
-
+  
   lastDrawIndex = drawIndex;
   lastZoom = zoom;
   lastOffsetX = offsetX;
   lastOffsetY = offsetY;
+  
+  
+  if (!appHost->isDirty()) {
+    return false;
+  }
+  
+ 
+  appHost->resetDirty();
 
   if (appHost->width() <= 0 || appHost->height() <= 0) {
     return true;
   }
-  //
+
   if (window == nullptr) {
     window = tgfx::WebGLWindow::MakeFrom(canvasID);
     if (window == nullptr) {
@@ -87,86 +87,70 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
   auto device = window->getDevice();
   if (!device) {
     window = nullptr;
-    return true;
+    return false;
   }
 
   auto context = device->lockContext();
   if (!context) {
     window = nullptr;
-    return true;
+    return false;
   }
   auto surface = window->getSurface(context);
   if (surface == nullptr) {
     device->unlock();
-    return true;
+    return false;
   }
+
+  appHost->updateZoomAndOffset(zoom, tgfx::Point(offsetX, offsetY));
   auto canvas = surface->getCanvas();
   canvas->clear();
-  if (appHost->width() > 0 && appHost->height() > 0) {
-    drawers::Drawer::DrawBackground(canvas, appHost.get());
-  }
-  auto drawer = drawers::Drawer::GetByIndex(drawIndex % drawers::Drawer::Count());
-  drawer->displayList.setZoomScale(zoom);
-  drawer->displayList.setContentOffset(offsetX, offsetY);
-  drawer->build(appHost.get());
-  drawer->displayList.render(canvas->getSurface(), false);
+  auto numhello2d = hello2d::LayerBuilder::Count();
+  auto index = (drawIndex % numhello2d);
+  bool isNeedBackground = true;
+  appHost->draw(canvas, index, isNeedBackground);
   context->flushAndSubmit();
   window->present(context);
   device->unlock();
+  
   return true;
 }
 
 void TGFXBaseView::setAllowBlur(bool allowBlur) {
-  auto drawer = drawers::Drawer::GetByIndex(lastDrawIndex);
-  if (!drawer) {
-    return;
-  }
-
-  drawer->displayList.setAllowZoomBlur(allowBlur);
+  appHost->displayList.setAllowZoomBlur(allowBlur);
+  appHost->markDirty(); 
 }
 
 void TGFXBaseView::setShowDirtyRect(bool isVisible) {
-  auto drawer = drawers::Drawer::GetByIndex(lastDrawIndex);
-  if (!drawer) {
-    return;
-  }
-  drawer->displayList.showDirtyRegions(isVisible);
+  appHost->displayList.showDirtyRegions(isVisible);
+  appHost->markDirty(); 
 }
 
 void TGFXBaseView::setRenderMode(int mode) {
-  auto drawer = drawers::Drawer::GetByIndex(lastDrawIndex);
-  if (!drawer) {
-    return;
-  }
-  drawer->displayList.setRenderMode(static_cast<tgfx::RenderMode>(mode));
+  appHost->displayList.setRenderMode(static_cast<tgfx::RenderMode>(mode));
+  appHost->markDirty(); 
 }
 
 void TGFXBaseView::setTileSize(int size) {
-  auto drawer = drawers::Drawer::GetByIndex(lastDrawIndex);
-  if (!drawer) {
-    return;
-  }
-  drawer->displayList.setTileSize(size);
+  appHost->displayList.setTileSize(size);
+  appHost->markDirty(); 
 }
 
 void TGFXBaseView::setMaxTileCount(int count) {
-  auto drawer = drawers::Drawer::GetByIndex(lastDrawIndex);
-  if (!drawer) {
-    return;
-  }
-  drawer->displayList.setMaxTileCount(count);
+  appHost->displayList.setMaxTileCount(count);
+  appHost->markDirty(); 
 }
 std::vector<std::string> TGFXBaseView::getDrawerNames() {
-  auto names = drawers::Drawer::Names();
+  auto names = hello2d::LayerBuilder::Names();
   return names;
 }
 
 bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
-  auto drawer = drawers::Drawer::GetByIndex(lastDrawIndex);
-  if (!drawer) {
+  if (!appHost) {
     return false;
   }
-  auto layers = drawer->getLayersUnderPoint(x, y);
+  
+  auto layers = appHost->getLayersUnderPoint(x, y);
+
   if (layers.size() > 0) {
     auto layer = layers[0];
 
@@ -182,7 +166,7 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
     }
 
     if (highLightLayerIndex >= 0) {
-      if (highLightLayerIndex == latestHighlightedLayer->getChildIndex(layer)) {
+      if (latestHighlightedLayer && highLightLayerIndex == latestHighlightedLayer->getChildIndex(layer)) {
         return false;
       }
     }
@@ -230,6 +214,7 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
     }
   }
 
+  appHost->markDirty(); 
   return true;
 }
 
@@ -238,8 +223,7 @@ bool TGFXBaseView::resetHighlightLayer() {
     return false;
   }
 
-  auto drawer = drawers::Drawer::GetByIndex(lastDrawIndex);
-  if (!drawer) {
+  if (!appHost) {
     return false;
   }
 
@@ -260,15 +244,16 @@ bool TGFXBaseView::resetHighlightLayer() {
       break;
   }
 
+  appHost->markDirty();
   return true;
 }
 
 bool TGFXBaseView::selectMoveLayer(float pointX, float pointY) {
-  auto drawer = drawers::Drawer::GetByIndex(lastDrawIndex);
-  if (!drawer) {
+  if (!appHost) {
     return false;
   }
-  auto layers = drawer->getLayersUnderPoint(pointX, pointY);
+  
+  auto layers = appHost->getLayersUnderPoint(pointX, pointY);
 
   if (layers.size() < 1) {
     return false;
@@ -290,7 +275,20 @@ bool TGFXBaseView::moveHighlightLayer(float deltaX, float deltaY) {
 
   moveLayer->setMatrix(matrix);
 
+  appHost->markDirty(); 
   return true;
+}
+
+void TGFXBaseView::markDirty() {
+  if (appHost) {
+    appHost->markDirty();
+  }
+}
+
+void TGFXBaseView::onWheelEvent() {
+  if (appHost) {
+    appHost->markDirty(); 
+  }
 }
 
 }  // namespace displaylist

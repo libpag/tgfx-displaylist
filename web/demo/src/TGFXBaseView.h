@@ -17,7 +17,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////
 #pragma once
 #include <emscripten/bind.h>
-#include "drawers/Drawer.h"
+#include "hello2d/LayerBuilder.h"
 #include "tgfx/gpu/opengl/webgl/WebGLWindow.h"
 #include "tgfx/layers/ShapeLayer.h"
 #include "tgfx/layers/SolidColor.h"
@@ -50,8 +50,11 @@ class TGFXBaseView {
 
   bool moveHighlightLayer(float deltaX, float deltaY);
 
+  void markDirty();
+  void onWheelEvent();
+
  protected:
-  std::shared_ptr<drawers::AppHost> appHost;
+  std::shared_ptr<hello2d::AppHost> appHost;
   std::shared_ptr<tgfx::WebGLWindow> window;
 
   int width() const {
