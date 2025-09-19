@@ -48,7 +48,16 @@ class TGFXBaseView {
 
   bool selectMoveLayer(float pointX, float pointY);
 
-  bool moveHighlightLayer(float deltaX, float deltaY);
+  void moveHighlightLayer(float deltaX, float deltaY);
+  
+  /**
+   * 获取当前移动图层的全局变换矩阵信息
+   * 返回数组: [scaleX, scaleY, translateX, translateY]
+   */
+  std::vector<float> getMoveLayerGlobalMatrix();
+
+  // 获取当前选中图层的位置信息（用于调试）
+  std::vector<float> getMoveLayerPosition();
 
   void markDirty();
   void onWheelEvent();
@@ -82,5 +91,15 @@ class TGFXBaseView {
   std::vector<std::shared_ptr<tgfx::ShapeStyle>> strokeStyles = {};
 
   std::shared_ptr<tgfx::Layer> moveLayer = nullptr;
+  
+  // 保存当前渲染设置，确保在重新构建layer tree时能够重新应用
+  int currentRenderMode = 0;  // 0=Direct, 1=Partial, 2=Tiled
+  bool currentAllowBlur = false;
+  bool currentShowDirtyRect = false;
+  int currentTileSize = 256;
+  int currentMaxTileCount = 16;
+  
+  // 重新应用所有渲染设置
+  void reapplyRenderSettings();
 };
 }  // namespace displaylist

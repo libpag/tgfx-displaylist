@@ -56,7 +56,9 @@ export class TGFXBaseView {
     public highlightLayerAndCheckRedraw: (x: number, y: number) => boolean;
     public resetHighlightLayer: () => boolean;
     public selectMoveLayer: (pointX: number, pointY: number) => boolean;
-    public moveHighlightLayer: (deltaX: number, deltaY: number) => boolean;
+    public moveHighlightLayer: (deltaX: number, deltaY: number) => void;
+    public getMoveLayerPosition: () => number[];
+    public getMoveLayerGlobalMatrix: () => number[];
     public markDirty: () => void;
 }
 
@@ -410,6 +412,7 @@ export function onResizeEvent(shareData: ShareData) {
     if (shareData.updateSizeTimer) {
         clearTimeout(shareData.updateSizeTimer);
     }
+    // 直接调用 updateSize，C++ 端会等待渲染完成后再重置窗口
     updateSize(shareData);
 }
 
@@ -620,6 +623,20 @@ export function bindEventListeners() {
             const tileOptions = document.getElementById('tileOptions');
             if (tileOptions) {
                 tileOptions.classList.toggle('hidden', mode !== 'tile');
+            }
+
+            // 重新应用当前的模糊设置，确保状态同步
+            const allowBlur = document.getElementById('allowBlur') as HTMLSelectElement | null;
+            if (allowBlur) {
+                const allow = allowBlur.value === 'true';
+                shareData.tgfxBaseView.setAllowBlur(allow);
+            }
+
+            // 切换渲染模式时重置脏区域显示为关闭状态
+            const showDirtyRect = document.getElementById('showDirtyRect') as HTMLSelectElement | null;
+            if (showDirtyRect) {
+                shareData.tgfxBaseView.setShowDirtyRect(false);
+                showDirtyRect.value = 'false';
             }
 
             shareData.tgfxBaseView.markDirty();

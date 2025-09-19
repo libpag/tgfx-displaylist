@@ -38,9 +38,8 @@ enum DeviceType {
   MOUSE = 1,
 }
 
-let isMouseDown = false; // 标记鼠标是否按下
-let hasMoved = false; // 标记鼠标是否移动
-
+let isMouseDown = false;
+let hasMoved = false;
 let lastPointX = 0;
 let lastPointY = 0;
 
@@ -86,20 +85,26 @@ function ThrottleWithTrailing(delay: number) {
   };
 }
 
-function ConvertCoordinates(e: MouseEvent, showSideBar = true) {
-  let sidebarWidth = 0;
-  let offsetX = 0;
-  let offsetY = 0;
-  if (showSideBar) {
-    const sidebar = document.getElementById('sidebar');
-    sidebarWidth = sidebar ? sidebar.clientWidth : 0;
-    offsetX = sidebarWidth;
-  }
-
+function ConvertCoordinates(e: MouseEvent, canvas: HTMLElement) {
+  const rect = canvas.getBoundingClientRect();
   return {
-    clientX: (e.clientX - offsetX) * window.devicePixelRatio,
-    clientY: (e.clientY - offsetY) * window.devicePixelRatio
+    clientX: (e.clientX - rect.left) * window.devicePixelRatio,
+    clientY: (e.clientY - rect.top) * window.devicePixelRatio
   };
+}
+
+// 屏幕坐标转换为世界坐标（考虑缩放和偏移）
+function screenToWorld(screenX: number, screenY: number, shareData: ShareData) {
+  const worldX = (screenX - shareData.offsetX) / shareData.zoom;
+  const worldY = (screenY - shareData.offsetY) / shareData.zoom;
+  return { worldX, worldY };
+}
+
+// 屏幕增量转换为世界增量（考虑缩放和偏移）
+function screenDeltaToWorldDelta(deltaX: number, deltaY: number, shareData: ShareData) {
+  const worldDeltaX = deltaX / shareData.zoom;
+  const worldDeltaY = deltaY / shareData.zoom;
+  return { worldDeltaX, worldDeltaY };
 }
 
 export type ZoomChangeCallback = (zoom: number) => void;
@@ -244,28 +249,38 @@ export class GestureManager {
     animationLoop(shareData);
   }
 
-  // @ts-ignore
-  // @ThrottleWithTrailing(100)
   public onMouseMove(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
     if (isMouseDown) {
-      hasMoved = true; // 如果鼠标按下了并且发生了移动
+      hasMoved = true;
 
-      const clientXY = ConvertCoordinates(event);
-      const deltaX = clientXY.clientX - lastPointX;
-      const deltaY = clientXY.clientY - lastPointY;
-
-      if (shareData.tgfxBaseView?.moveHighlightLayer(deltaX, deltaY)) {
-        console.log("如果鼠标按下了并且发生了移动");
+      const clientXY = ConvertCoordinates(event, canvas);
+      const screenDeltaX = clientXY.clientX - lastPointX;
+      const screenDeltaY = clientXY.clientY - lastPointY;
+      
+      // 只有当增量不为零时才处理移动
+      if (screenDeltaX !== 0 || screenDeltaY !== 0) {
+        // 直接使用屏幕增量，让后端处理坐标变换
+        try {
+          shareData.tgfxBaseView?.moveHighlightLayer(screenDeltaX, screenDeltaY);
+        } catch (error) {
+          console.error('移动图层时出错:', error);
+        }
+        
+        // 更新lastPoint
         lastPointX = clientXY.clientX;
         lastPointY = clientXY.clientY;
+        
         shareData.tgfxBaseView?.markDirty();
         animationLoop(shareData);
       }
 
       return;
     }
-    const clientXY = ConvertCoordinates(event);
-    const reDraw = shareData.tgfxBaseView?.highlightLayerAndCheckRedraw(clientXY.clientX, clientXY.clientY);
+    
+    // 鼠标悬停高亮
+    const clientXY = ConvertCoordinates(event, canvas);
+    const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+    const reDraw = shareData.tgfxBaseView?.highlightLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
     if (reDraw) {
       shareData.tgfxBaseView?.markDirty();
       animationLoop(shareData);
@@ -273,19 +288,22 @@ export class GestureManager {
   }
 
   public onMouseLeave(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
-    console.log('鼠标离开 canvas');
+    // 鼠标离开canvas时的处理
   }
 
   public onMouseDown(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
-    console.log('鼠标单击 canvas且没有释放');
     if (event.button === 0) { // 判断是否为左键
-      const clientXY = ConvertCoordinates(event);
+      const clientXY = ConvertCoordinates(event, canvas);
+      const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+      
       shareData.tgfxBaseView?.resetHighlightLayer();
-      if (shareData.tgfxBaseView?.selectMoveLayer(clientXY.clientX, clientXY.clientY)) {
+      if (shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY)) {
         lastPointX = clientXY.clientX;
         lastPointY = clientXY.clientY;
         isMouseDown = true;
-        hasMoved = false; // 鼠标刚按下，假设没有移动
+        hasMoved = false;
+        
+
       }
       shareData.tgfxBaseView?.markDirty();
       animationLoop(shareData);
@@ -295,18 +313,21 @@ export class GestureManager {
   public onMouseUp(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
     if (event.button === 0) { // 判断是否为左键
       if (!hasMoved) {
-        console.log('鼠标左键单击后弹起，未移动鼠标');
-      } else {
-        console.log('鼠标左键单击后弹起，并且移动鼠标');
+        const clientXY = ConvertCoordinates(event, canvas);
+        const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+
       }
+      
+      // 重置状态
       isMouseDown = false;
       hasMoved = false;
     }
   }
 
   public onClick(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
-    console.log('canvas 被点击', event.clientX, event.clientY);
-    const clientXY = ConvertCoordinates(event);
+    const clientXY = ConvertCoordinates(event, canvas);
+    const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+
     shareData.tgfxBaseView?.resetHighlightLayer();
     shareData.tgfxBaseView?.markDirty();
     animationLoop(shareData);
