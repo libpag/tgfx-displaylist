@@ -18,6 +18,7 @@
 #pragma once
 #include <emscripten/bind.h>
 #include "hello2d/LayerBuilder.h"
+#include "CoordinateTransformer.h"
 #include "tgfx/gpu/opengl/webgl/WebGLWindow.h"
 #include "tgfx/layers/ShapeLayer.h"
 #include "tgfx/layers/SolidColor.h"
@@ -87,8 +88,6 @@ class TGFXBaseView {
 
   std::shared_ptr<tgfx::Layer> latestHighlightedLayer = nullptr;
   int highLightLayerIndex = -1;
-
-  std::vector<std::shared_ptr<tgfx::ShapeStyle>> strokeStyles = {};
 
   std::shared_ptr<tgfx::Layer> moveLayer = nullptr;
   

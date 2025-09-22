@@ -16,12 +16,11 @@
 //
 /////////////////////////////////////////////////////////////////////////////////////////////////
 #include "TGFXBaseView.h"
-#include <cmath>
-#include "TGFXBaseView.h"
 #include "hello2d/LayerBuilder.h"
 #include "tgfx/core/Point.h"
 #include "tgfx/layers/ImageLayer.h"
 #include "tgfx/layers/TextLayer.h"
+#include <cmath>
 
 using namespace emscripten;
 
@@ -37,16 +36,14 @@ TGFXBaseView::TGFXBaseView(const std::string& canvasID) : canvasID(canvasID) {
 bool TGFXBaseView::updateSize(float devicePixelRatio) {
   if (canvasID.empty()) return false;
 
-  // 在改变窗口大小前，等待当前渲染任务完成
+  // 等待当前渲染任务完成
   if (window) {
     auto device = window->getDevice();
     if (device) {
       auto context = device->lockContext();
       if (context) {
-        printf("Waiting for render completion before resize...\n");
-        context->flushAndSubmit();  // 等待所有渲染任务完成
+        context->flushAndSubmit();
         device->unlock();
-        printf("Render completion confirmed, proceeding with resize\n");
       }
     }
   }
@@ -61,9 +58,7 @@ bool TGFXBaseView::updateSize(float devicePixelRatio) {
   auto sizeChanged = appHost->updateScreen(width, height, devicePixelRatio);
 
   if (sizeChanged) {
-    printf("Canvas size changed: %dx%d, devicePixelRatio: %.2f, resetting window\n", 
-           width, height, devicePixelRatio);
-    window = nullptr;  // 现在安全地重置窗口
+    window = nullptr;
     appHost->markDirty();
   }
   return sizeChanged;
@@ -77,18 +72,15 @@ void TGFXBaseView::setImage(const std::string& name, tgfx::NativeImageRef native
 }
 
 bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY) {
-  
   lastDrawIndex = drawIndex;
   lastZoom = zoom;
   lastOffsetX = offsetX;
   lastOffsetY = offsetY;
   
-  
   if (!appHost->isDirty()) {
     return false;
   }
   
- 
   appHost->resetDirty();
 
   if (appHost->width() <= 0 || appHost->height() <= 0) {
@@ -96,32 +88,26 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
   }
 
   if (window == nullptr) {
-    printf("Creating new WebGL window for canvas: %s\n", canvasID.c_str());
     window = tgfx::WebGLWindow::MakeFrom(canvasID);
     if (window == nullptr) {
-      printf("Failed to create WebGL window!\n");
       return true;
     }
-    printf("WebGL window created successfully\n");
   }
   
   auto device = window->getDevice();
   if (!device) {
-    printf("Device is null! Resetting window.\n");
     window = nullptr;
     return true;
   }
 
   auto context = device->lockContext();
   if (!context) {
-    printf("Failed to lock context! Resetting window.\n");
     window = nullptr;
     return true;
   }
   
   auto surface = window->getSurface(context);
   if (surface == nullptr) {
-    printf("Surface is null! Unlocking device.\n");
     device->unlock();
     return true;
   }
@@ -129,13 +115,11 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
   appHost->updateZoomAndOffset(zoom, tgfx::Point(offsetX, offsetY));
   auto canvas = surface->getCanvas();
   if (canvas == nullptr) {
-    printf("Canvas is null! Surface exists but canvas creation failed.\n");
     device->unlock();
     return true;
   }
   canvas->clear();
   
-  // 在每次draw之前重新应用渲染设置，确保在重新构建layer tree后设置不丢失
   reapplyRenderSettings();
   
   auto numhello2d = hello2d::LayerBuilder::Count();
@@ -213,37 +197,37 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
       resetHighlightLayer();
     }
 
-    switch (layer->type()) {
-      case tgfx::LayerType::Shape: {
-        auto shapeLayer = std::static_pointer_cast<tgfx::ShapeLayer>(layer);
-        strokeStyles = shapeLayer->strokeStyles();
-        shapeLayer->addStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41)));
-        shapeLayer->setLineWidth(5);
-        latestHighlightedLayer = layer;
-      } break;
-      default: {
-        auto highlightLayer = tgfx::ShapeLayer::Make();
-        highlightLayer->setBlendMode(tgfx::BlendMode::SrcOver);
-        auto rectPath = tgfx::Path();
-        rectPath.addRect(layer->getBounds());
-        highlightLayer->setPath(rectPath);
+    auto highlightLayer = tgfx::ShapeLayer::Make();
+    highlightLayer->setBlendMode(tgfx::BlendMode::SrcOver);
+    auto rectPath = tgfx::Path();
+    rectPath.addRect(layer->getBounds(nullptr, true));
+    highlightLayer->setPath(rectPath);
 
-        highlightLayer->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41)));
-        highlightLayer->setLineWidth(5);
-        auto maskLayer = layer->mask();
-        auto parentLayer = layer->parent();
-        highlightLayer->setMatrix(layer->matrix());
-        if (maskLayer != nullptr) {
-          auto maskPath = tgfx::Path();
-          maskPath.addRect(maskLayer->getBounds());
-          highlightLayer->setPath(maskPath);
-        }
-        auto index = parentLayer->getChildIndex(layer);
-        parentLayer->addChildAt(highlightLayer, index + 1);
-        highLightLayerIndex = parentLayer->getChildIndex(highlightLayer);
-        latestHighlightedLayer = highlightLayer;
-      } break;
+    highlightLayer->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41)));
+    highlightLayer->setLineWidth(5);
+    highlightLayer->setStrokeAlign(tgfx::StrokeAlign::Outside);
+    auto maskLayer = layer->mask();
+    
+    auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
+    highlightLayer->setMatrix(globalMatrix);
+    
+    if (maskLayer != nullptr) {
+      auto maskPath = tgfx::Path();
+      maskPath.addRect(maskLayer->getBounds());
+      highlightLayer->setPath(maskPath);
     }
+    
+    auto rootLayer = appHost->displayList.root();
+    if (rootLayer) {
+      rootLayer->addChild(highlightLayer);
+      highLightLayerIndex = rootLayer->getChildIndex(highlightLayer);
+    } else {
+      auto parentLayer = layer->parent();
+      auto index = parentLayer->getChildIndex(layer);
+      parentLayer->addChildAt(highlightLayer, index + 1);
+      highLightLayerIndex = parentLayer->getChildIndex(highlightLayer);
+    }
+    latestHighlightedLayer = highlightLayer;
 
   } else {
     if (latestHighlightedLayer) {
@@ -266,22 +250,10 @@ bool TGFXBaseView::resetHighlightLayer() {
     return false;
   }
 
-  
-  switch (latestHighlightedLayer->type()) {
-    case tgfx::LayerType::Shape: {
-      auto shapeLayer = std::static_pointer_cast<tgfx::ShapeLayer>(latestHighlightedLayer);
-      shapeLayer->removeStrokeStyles();
-      shapeLayer->setStrokeStyles(strokeStyles);
-      latestHighlightedLayer = nullptr;
-      break;
-    }
-    default:
-      if (highLightLayerIndex >= 0) {
-        latestHighlightedLayer->removeFromParent();
-        latestHighlightedLayer = nullptr;
-        highLightLayerIndex = -1;
-      }
-      break;
+  if (highLightLayerIndex >= 0) {
+    latestHighlightedLayer->removeFromParent();
+    latestHighlightedLayer = nullptr;
+    highLightLayerIndex = -1;
   }
 
   appHost->markDirty();
@@ -309,28 +281,13 @@ void TGFXBaseView::moveHighlightLayer(float deltaX, float deltaY) {
     return;
   }
 
-  // 首先将屏幕坐标增量转换为视图坐标增量（考虑前端的缩放）
-  float viewDeltaX = deltaX / lastZoom;
-  float viewDeltaY = deltaY / lastZoom;
+  auto localDelta = CoordinateTransformer::screenDeltaToLayerDelta(
+    deltaX, deltaY, lastZoom, moveLayer
+  );
   
-  // 然后将视图坐标的两个点转换为图层本地坐标
-  auto viewPoint1 = tgfx::Point::Make(0, 0);
-  auto viewPoint2 = tgfx::Point::Make(viewDeltaX, viewDeltaY);
-  
-  auto localPoint1 = moveLayer->globalToLocal(viewPoint1);
-  auto localPoint2 = moveLayer->globalToLocal(viewPoint2);
-  
-  // 计算图层本地坐标的增量
-  float localDeltaX = localPoint2.x - localPoint1.x;
-  float localDeltaY = localPoint2.y - localPoint1.y;
-  
-  // 应用图层本地坐标的移动
   auto matrix = moveLayer->matrix();
-  matrix.preTranslate(localDeltaX, localDeltaY);
+  matrix.preTranslate(localDelta.x, localDelta.y);
   moveLayer->setMatrix(matrix);
-  
-  printf("屏幕增量: (%.2f, %.2f) -> 视图增量: (%.2f, %.2f) -> 图层本地增量: (%.2f, %.2f) [zoom=%.2f]\n", 
-         deltaX, deltaY, viewDeltaX, viewDeltaY, localDeltaX, localDeltaY, lastZoom);
   
   appHost->markDirty();
 }
@@ -348,16 +305,13 @@ std::vector<float> TGFXBaseView::getMoveLayerPosition() {
 }
 
 std::vector<float> TGFXBaseView::getMoveLayerGlobalMatrix() {
-  std::vector<float> matrixInfo = {1.0f, 1.0f, 0.0f, 0.0f}; // [scaleX, scaleY, translateX, translateY]
+  std::vector<float> matrixInfo = {1.0f, 1.0f, 0.0f, 0.0f};
   
   if (moveLayer != nullptr) {
-    // 使用公开的 localToGlobal 方法来计算变换
-    // 通过变换单位向量来获取缩放信息
     auto origin = moveLayer->localToGlobal(tgfx::Point::Make(0, 0));
     auto unitX = moveLayer->localToGlobal(tgfx::Point::Make(1, 0));
     auto unitY = moveLayer->localToGlobal(tgfx::Point::Make(0, 1));
     
-    // 计算缩放比例
     float scaleX = unitX.x - origin.x;
     float scaleY = unitY.y - origin.y;
     
@@ -387,7 +341,6 @@ void TGFXBaseView::reapplyRenderSettings() {
     return;
   }
   
-  // 重新应用所有渲染设置，确保在重新构建layer tree后设置不丢失
   appHost->displayList.setRenderMode(static_cast<tgfx::RenderMode>(currentRenderMode));
   appHost->displayList.setAllowZoomBlur(currentAllowBlur);
   appHost->displayList.showDirtyRegions(currentShowDirtyRect);
