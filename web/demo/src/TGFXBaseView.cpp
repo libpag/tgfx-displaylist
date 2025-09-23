@@ -184,6 +184,19 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
       }
     }
 
+    // 验证鼠标是否真的在图层的内容边界内
+    auto contentBounds = layer->getBounds(nullptr, true);
+    auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
+    auto globalContentBounds = globalMatrix.mapRect(contentBounds);
+    
+    if (!globalContentBounds.contains(x, y)) {
+      // 鼠标不在内容边界内，移除现有高亮
+      if (latestHighlightedLayer) {
+        resetHighlightLayer();
+      }
+      return false;
+    }
+
     if (layer == latestHighlightedLayer) {
       return false;
     }
@@ -204,11 +217,17 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
     highlightLayer->setPath(rectPath);
 
     highlightLayer->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41)));
-    highlightLayer->setLineWidth(5);
+    
+    // 计算缩放比例，调整线宽以保持视觉一致性
+    float scaleX = globalMatrix.getScaleX();
+    float scaleY = globalMatrix.getScaleY();
+    float avgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
+    float adjustedLineWidth = avgScale > 0 ? 5.0f / avgScale : 5.0f;
+    
+    highlightLayer->setLineWidth(adjustedLineWidth);
     highlightLayer->setStrokeAlign(tgfx::StrokeAlign::Outside);
     auto maskLayer = layer->mask();
     
-    auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
     highlightLayer->setMatrix(globalMatrix);
     
     if (maskLayer != nullptr) {
