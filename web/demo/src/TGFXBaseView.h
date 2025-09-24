@@ -47,6 +47,9 @@ class TGFXBaseView {
 
   bool resetHighlightLayer();
 
+
+  void updateHighlightLineWidth();
+
   bool selectMoveLayer(float pointX, float pointY);
 
   void moveHighlightLayer(float deltaX, float deltaY);
@@ -100,5 +103,8 @@ class TGFXBaseView {
 
   // 重新应用所有渲染设置
   void reapplyRenderSettings();
+
+  // 静态成员变量：全局高亮线宽配置
+  static float s_highlightLineWidth;
 };
 }  // namespace displaylist

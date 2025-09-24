@@ -25,6 +25,10 @@
 using namespace emscripten;
 
 namespace displaylist {
+
+// 默认高亮线宽为 5.0f
+float TGFXBaseView::s_highlightLineWidth = 5.0f;
+
 TGFXBaseView::TGFXBaseView(const std::string& canvasID) : canvasID(canvasID) {
   appHost = std::make_shared<hello2d::AppHost>();
   lastDrawIndex = -1;
@@ -113,6 +117,10 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
   }
 
   appHost->updateZoomAndOffset(zoom, tgfx::Point(offsetX, offsetY));
+  
+  // 实时更新高亮线宽以保持视觉一致性
+  updateHighlightLineWidth();
+  
   auto canvas = surface->getCanvas();
   if (canvas == nullptr) {
     device->unlock();
@@ -322,10 +330,14 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
     highlightLayer->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41)));
 
     // 计算缩放比例，调整线宽以保持视觉一致性
+    // 同时考虑全局缩放(lastZoom)和图层变换矩阵
     float scaleX = globalMatrix.getScaleX();
     float scaleY = globalMatrix.getScaleY();
-    float avgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
-    float adjustedLineWidth = avgScale > 0 ? 5.0f / avgScale : 5.0f;
+    float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
+    
+    // 结合全局缩放和图层缩放计算最终的缩放比例
+    float totalScale = layerAvgScale * lastZoom;
+    float adjustedLineWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
 
     highlightLayer->setLineWidth(adjustedLineWidth);
     highlightLayer->setStrokeAlign(tgfx::StrokeAlign::Outside);
@@ -460,6 +472,8 @@ void TGFXBaseView::markDirty() {
 
 void TGFXBaseView::onWheelEvent() {
   if (appHost) {
+    // 实时更新高亮线宽以保持视觉一致性
+    updateHighlightLineWidth();
     appHost->markDirty();
   }
 }
@@ -474,6 +488,32 @@ void TGFXBaseView::reapplyRenderSettings() {
   appHost->displayList.showDirtyRegions(currentShowDirtyRect);
   appHost->displayList.setTileSize(currentTileSize);
   appHost->displayList.setMaxTileCount(currentMaxTileCount);
+}
+
+
+void TGFXBaseView::updateHighlightLineWidth() {
+  if (!latestHighlightedLayer || !appHost) {
+    return;
+  }
+
+  // 获取高亮图层，我们知道它是 ShapeLayer 类型（在 highlightLayerAndCheckRedraw 中创建）
+  auto shapeLayer = std::static_pointer_cast<tgfx::ShapeLayer>(latestHighlightedLayer);
+
+  // 获取高亮图层的变换矩阵
+  auto globalMatrix = latestHighlightedLayer->matrix();
+  
+  // 计算缩放比例，调整线宽以保持视觉一致性
+  // 同时考虑全局缩放(lastZoom)和图层变换矩阵
+  float scaleX = globalMatrix.getScaleX();
+  float scaleY = globalMatrix.getScaleY();
+  float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
+  
+  // 结合全局缩放和图层缩放计算最终的缩放比例
+  float totalScale = layerAvgScale * lastZoom;
+  float adjustedLineWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
+  
+  // 更新线宽
+  shapeLayer->setLineWidth(adjustedLineWidth);
 }
 
 }  // namespace displaylist
