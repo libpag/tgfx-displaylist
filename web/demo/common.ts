@@ -60,6 +60,7 @@ export class TGFXBaseView {
     public getMoveLayerPosition: () => number[];
     public getMoveLayerGlobalMatrix: () => number[];
     public markDirty: () => void;
+    public resetMoveLayers: () => void;
 }
 
 export class ShareData {
@@ -393,7 +394,7 @@ export function animationLoop(shareData: ShareData) {
 
         // 调用绘制函数，如果返回 true 表示有内容被绘制，继续循环
         const hasDrawn = draw(shareData);
-        
+
         if (hasDrawn) {
             shareData.animationFrameId = requestAnimationFrame(frame);
         } else {

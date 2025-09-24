@@ -65,6 +65,7 @@ bool TGFXBaseView::updateSize(float devicePixelRatio) {
     window = nullptr;
     appHost->markDirty();
   }
+  resetHighlightLayer();
   return sizeChanged;
 }
 
@@ -117,10 +118,10 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
   }
 
   appHost->updateZoomAndOffset(zoom, tgfx::Point(offsetX, offsetY));
-  
+
   // 实时更新高亮线宽以保持视觉一致性
   updateHighlightLineWidth();
-  
+
   auto canvas = surface->getCanvas();
   if (canvas == nullptr) {
     device->unlock();
@@ -334,10 +335,11 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
     float scaleX = globalMatrix.getScaleX();
     float scaleY = globalMatrix.getScaleY();
     float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
-    
+
     // 结合全局缩放和图层缩放计算最终的缩放比例
     float totalScale = layerAvgScale * lastZoom;
-    float adjustedLineWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
+    float adjustedLineWidth =
+        totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
 
     highlightLayer->setLineWidth(adjustedLineWidth);
     highlightLayer->setStrokeAlign(tgfx::StrokeAlign::Outside);
@@ -389,6 +391,21 @@ bool TGFXBaseView::resetHighlightLayer() {
     latestHighlightedLayer = nullptr;
     highLightLayerIndex = -1;
   }
+
+  appHost->markDirty();
+  return true;
+}
+
+bool TGFXBaseView::resetMoveLayers() {
+  if (moveLayers.empty()) {
+    return false;
+  }
+
+  if (!appHost) {
+    return false;
+  }
+
+  moveLayers.clear();
 
   appHost->markDirty();
   return true;
@@ -490,7 +507,6 @@ void TGFXBaseView::reapplyRenderSettings() {
   appHost->displayList.setMaxTileCount(currentMaxTileCount);
 }
 
-
 void TGFXBaseView::updateHighlightLineWidth() {
   if (!latestHighlightedLayer || !appHost) {
     return;
@@ -501,17 +517,18 @@ void TGFXBaseView::updateHighlightLineWidth() {
 
   // 获取高亮图层的变换矩阵
   auto globalMatrix = latestHighlightedLayer->matrix();
-  
+
   // 计算缩放比例，调整线宽以保持视觉一致性
   // 同时考虑全局缩放(lastZoom)和图层变换矩阵
   float scaleX = globalMatrix.getScaleX();
   float scaleY = globalMatrix.getScaleY();
   float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
-  
+
   // 结合全局缩放和图层缩放计算最终的缩放比例
   float totalScale = layerAvgScale * lastZoom;
-  float adjustedLineWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
-  
+  float adjustedLineWidth =
+      totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
+
   // 更新线宽
   shapeLayer->setLineWidth(adjustedLineWidth);
 }
