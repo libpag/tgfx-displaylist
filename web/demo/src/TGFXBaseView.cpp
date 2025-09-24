@@ -16,11 +16,11 @@
 //
 /////////////////////////////////////////////////////////////////////////////////////////////////
 #include "TGFXBaseView.h"
+#include <cmath>
 #include "hello2d/LayerBuilder.h"
 #include "tgfx/core/Point.h"
 #include "tgfx/layers/ImageLayer.h"
 #include "tgfx/layers/TextLayer.h"
-#include <cmath>
 
 using namespace emscripten;
 
@@ -76,11 +76,11 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
   lastZoom = zoom;
   lastOffsetX = offsetX;
   lastOffsetY = offsetY;
-  
+
   if (!appHost->isDirty()) {
     return false;
   }
-  
+
   appHost->resetDirty();
 
   if (appHost->width() <= 0 || appHost->height() <= 0) {
@@ -93,7 +93,7 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
       return true;
     }
   }
-  
+
   auto device = window->getDevice();
   if (!device) {
     window = nullptr;
@@ -105,7 +105,7 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
     window = nullptr;
     return true;
   }
-  
+
   auto surface = window->getSurface(context);
   if (surface == nullptr) {
     device->unlock();
@@ -119,9 +119,9 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
     return true;
   }
   canvas->clear();
-  
+
   reapplyRenderSettings();
-  
+
   auto numhello2d = hello2d::LayerBuilder::Count();
   auto index = (drawIndex % numhello2d);
   bool isNeedBackground = false;
@@ -129,38 +129,38 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
   context->flushAndSubmit();
   window->present(context);
   device->unlock();
-  
+
   return true;
 }
 
 void TGFXBaseView::setAllowBlur(bool allowBlur) {
   currentAllowBlur = allowBlur;
   appHost->displayList.setAllowZoomBlur(allowBlur);
-  appHost->markDirty(); 
+  appHost->markDirty();
 }
 
 void TGFXBaseView::setShowDirtyRect(bool isVisible) {
   currentShowDirtyRect = isVisible;
   appHost->displayList.showDirtyRegions(isVisible);
-  appHost->markDirty(); 
+  appHost->markDirty();
 }
 
 void TGFXBaseView::setRenderMode(int mode) {
   currentRenderMode = mode;
   appHost->displayList.setRenderMode(static_cast<tgfx::RenderMode>(mode));
-  appHost->markDirty(); 
+  appHost->markDirty();
 }
 
 void TGFXBaseView::setTileSize(int size) {
   currentTileSize = size;
   appHost->displayList.setTileSize(size);
-  appHost->markDirty(); 
+  appHost->markDirty();
 }
 
 void TGFXBaseView::setMaxTileCount(int count) {
   currentMaxTileCount = count;
   appHost->displayList.setMaxTileCount(count);
-  appHost->markDirty(); 
+  appHost->markDirty();
 }
 std::vector<std::string> TGFXBaseView::getDrawerNames() {
   auto names = hello2d::LayerBuilder::Names();
@@ -171,7 +171,7 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
   if (!appHost) {
     return false;
   }
-  
+
   auto layers = appHost->getLayersUnderPoint(x, y);
 
   if (layers.size() > 0) {
@@ -183,29 +183,39 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
       auto layerType = layers[i]->type();
       const char* typeName = "Unknown";
       switch (layerType) {
-        case tgfx::LayerType::Image: typeName = "Image"; break;
-        case tgfx::LayerType::Text: typeName = "Text"; break;
-        case tgfx::LayerType::Shape: typeName = "Shape"; break;
-        case tgfx::LayerType::Solid: typeName = "Solid"; break;
-        case tgfx::LayerType::Layer: typeName = "Layer"; break;
+        case tgfx::LayerType::Image:
+          typeName = "Image";
+          break;
+        case tgfx::LayerType::Text:
+          typeName = "Text";
+          break;
+        case tgfx::LayerType::Shape:
+          typeName = "Shape";
+          break;
+        case tgfx::LayerType::Solid:
+          typeName = "Solid";
+          break;
+        case tgfx::LayerType::Layer:
+          typeName = "Layer";
+          break;
       }
       printf("  [%zu] Type: %s\n", i, typeName);
     }
 
     // 优先选择真正的内容图层，使用分级选择策略
     std::shared_ptr<tgfx::Layer> selectedLayer = nullptr;
-    
+
     // 第一优先级：Image 和 Text（真正的内容层）
     for (auto it : layers) {
       auto layerType = it->type();
       if (layerType == tgfx::LayerType::Image || layerType == tgfx::LayerType::Text) {
         selectedLayer = it;
-        printf(">>> Selected HIGH-PRIORITY layer type: %s\n", 
+        printf(">>> Selected HIGH-PRIORITY layer type: %s\n",
                layerType == tgfx::LayerType::Image ? "Image" : "Text");
         break;
       }
     }
-    
+
     // 第二优先级：检查 Shape 层是否是遮罩层，如果是则选择被遮罩的层
     if (!selectedLayer) {
       for (auto it : layers) {
@@ -213,54 +223,57 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
         if (layerType == tgfx::LayerType::Shape || layerType == tgfx::LayerType::Solid) {
           // 检查这个 Shape 层是否是某个层的遮罩
           std::shared_ptr<tgfx::Layer> maskedLayer = nullptr;
-          
+
           // 遍历所有层，找到使用当前 Shape 作为遮罩的层
           for (auto checkLayer : layers) {
             if (checkLayer->mask() == it) {
               maskedLayer = checkLayer;
               printf(">>> Found masked layer! Shape is mask for layer type: %s\n",
-                     checkLayer->type() == tgfx::LayerType::Image ? "Image" :
-                     checkLayer->type() == tgfx::LayerType::Text ? "Text" :
-                     checkLayer->type() == tgfx::LayerType::Shape ? "Shape" :
-                     checkLayer->type() == tgfx::LayerType::Solid ? "Solid" :
-                     checkLayer->type() == tgfx::LayerType::Layer ? "Layer" : "Unknown");
+                     checkLayer->type() == tgfx::LayerType::Image   ? "Image"
+                     : checkLayer->type() == tgfx::LayerType::Text  ? "Text"
+                     : checkLayer->type() == tgfx::LayerType::Shape ? "Shape"
+                     : checkLayer->type() == tgfx::LayerType::Solid ? "Solid"
+                     : checkLayer->type() == tgfx::LayerType::Layer ? "Layer"
+                                                                    : "Unknown");
               break;
             }
           }
-          
+
           // 如果找到了被遮罩的层，优先选择被遮罩的层
           if (maskedLayer) {
             selectedLayer = maskedLayer;
-            printf(">>> Selected MASKED layer type: %s\n", 
-                   maskedLayer->type() == tgfx::LayerType::Image ? "Image" :
-                   maskedLayer->type() == tgfx::LayerType::Text ? "Text" :
-                   maskedLayer->type() == tgfx::LayerType::Shape ? "Shape" :
-                   maskedLayer->type() == tgfx::LayerType::Solid ? "Solid" :
-                   maskedLayer->type() == tgfx::LayerType::Layer ? "Layer" : "Unknown");
+            printf(">>> Selected MASKED layer type: %s\n",
+                   maskedLayer->type() == tgfx::LayerType::Image   ? "Image"
+                   : maskedLayer->type() == tgfx::LayerType::Text  ? "Text"
+                   : maskedLayer->type() == tgfx::LayerType::Shape ? "Shape"
+                   : maskedLayer->type() == tgfx::LayerType::Solid ? "Solid"
+                   : maskedLayer->type() == tgfx::LayerType::Layer ? "Layer"
+                                                                   : "Unknown");
           } else {
             selectedLayer = it;
-            printf(">>> Selected MEDIUM-PRIORITY layer type: %s\n", 
+            printf(">>> Selected MEDIUM-PRIORITY layer type: %s\n",
                    layerType == tgfx::LayerType::Shape ? "Shape" : "Solid");
           }
           break;
         }
       }
     }
-    
+
     // 最后选择：使用第一个层（通常是容器层）
     if (!selectedLayer) {
       selectedLayer = layers[0];
-      printf(">>> Selected FALLBACK layer type: %s\n", 
+      printf(">>> Selected FALLBACK layer type: %s\n",
              selectedLayer->type() == tgfx::LayerType::Layer ? "Layer" : "Unknown");
     }
-    
+
     layer = selectedLayer;
-    printf("=== Final selected layer type: %s ===\n\n", 
-           layer->type() == tgfx::LayerType::Image ? "Image" :
-           layer->type() == tgfx::LayerType::Text ? "Text" :
-           layer->type() == tgfx::LayerType::Shape ? "Shape" :
-           layer->type() == tgfx::LayerType::Solid ? "Solid" :
-           layer->type() == tgfx::LayerType::Layer ? "Layer" : "Unknown");
+    printf("=== Final selected layer type: %s ===\n\n",
+           layer->type() == tgfx::LayerType::Image   ? "Image"
+           : layer->type() == tgfx::LayerType::Text  ? "Text"
+           : layer->type() == tgfx::LayerType::Shape ? "Shape"
+           : layer->type() == tgfx::LayerType::Solid ? "Solid"
+           : layer->type() == tgfx::LayerType::Layer ? "Layer"
+                                                     : "Unknown");
 
     // 如果没有找到有内容的图层，使用原来的遮罩逻辑
     auto selectedLayerType = layer->type();
@@ -277,7 +290,7 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
     auto contentBounds = layer->getBounds(nullptr, true);
     auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
     auto globalContentBounds = globalMatrix.mapRect(contentBounds);
-    
+
     if (!globalContentBounds.contains(x, y)) {
       // 鼠标不在内容边界内，移除现有高亮
       if (latestHighlightedLayer) {
@@ -291,7 +304,8 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
     }
 
     if (highLightLayerIndex >= 0) {
-      if (latestHighlightedLayer && highLightLayerIndex == latestHighlightedLayer->getChildIndex(layer)) {
+      if (latestHighlightedLayer &&
+          highLightLayerIndex == latestHighlightedLayer->getChildIndex(layer)) {
         return false;
       }
     }
@@ -306,25 +320,25 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
     highlightLayer->setPath(rectPath);
 
     highlightLayer->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41)));
-    
+
     // 计算缩放比例，调整线宽以保持视觉一致性
     float scaleX = globalMatrix.getScaleX();
     float scaleY = globalMatrix.getScaleY();
     float avgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
     float adjustedLineWidth = avgScale > 0 ? 5.0f / avgScale : 5.0f;
-    
+
     highlightLayer->setLineWidth(adjustedLineWidth);
     highlightLayer->setStrokeAlign(tgfx::StrokeAlign::Outside);
     auto maskLayer = layer->mask();
-    
+
     highlightLayer->setMatrix(globalMatrix);
-    
+
     if (maskLayer != nullptr) {
       auto maskPath = tgfx::Path();
       maskPath.addRect(maskLayer->getBounds());
       highlightLayer->setPath(maskPath);
     }
-    
+
     auto rootLayer = appHost->displayList.root();
     if (rootLayer) {
       rootLayer->addChild(highlightLayer);
@@ -345,7 +359,7 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
     }
   }
 
-  appHost->markDirty(); 
+  appHost->markDirty();
   return true;
 }
 
@@ -372,85 +386,69 @@ bool TGFXBaseView::selectMoveLayer(float pointX, float pointY) {
   if (!appHost) {
     return false;
   }
-  
+
   auto layers = appHost->getLayersUnderPoint(pointX, pointY);
 
   if (layers.size() < 1) {
     return false;
   }
-
   auto layer = layers[0];
-
-  // 优先选择有实际内容的叶子图层
   for (auto it : layers) {
-    // 检查是否是有实际内容的图层类型
-    auto layerType = it->type();
-    bool hasContent = false;
-    
-    // 检查是否是有实际内容的图层类型
-    if (layerType == tgfx::LayerType::Image || 
-        layerType == tgfx::LayerType::Text || 
-        layerType == tgfx::LayerType::Shape ||
-        layerType == tgfx::LayerType::Solid) {
-      hasContent = true;
-    }
-    
-    // 如果有实际内容，优先选择这个图层
-    if (hasContent) {
-      layer = it;
-      break;
+    if (it->mask() == layer) {
+      moveLayers.push_back(it);
     }
   }
-
-  moveLayer = layer;
+  moveLayers.push_back(layer);
   return true;
 }
 
 void TGFXBaseView::moveHighlightLayer(float deltaX, float deltaY) {
-  if (!moveLayer) {
+  if (moveLayers.empty()) {
     return;
   }
 
-  auto localDelta = CoordinateTransformer::screenDeltaToLayerDelta(
-    deltaX, deltaY, lastZoom, moveLayer
-  );
-  
-  auto matrix = moveLayer->matrix();
-  matrix.preTranslate(localDelta.x, localDelta.y);
-  moveLayer->setMatrix(matrix);
-  
+  for (auto moveLayer : moveLayers) {
+    auto localDelta =
+        CoordinateTransformer::screenDeltaToLayerDelta(deltaX, deltaY, lastZoom, moveLayer);
+
+    auto matrix = moveLayer->matrix();
+    matrix.preTranslate(localDelta.x, localDelta.y);
+    moveLayer->setMatrix(matrix);
+  }
+
   appHost->markDirty();
 }
 
 std::vector<float> TGFXBaseView::getMoveLayerPosition() {
   std::vector<float> position = {0.0f, 0.0f};
-  
-  if (moveLayer != nullptr) {
-    auto matrix = moveLayer->matrix();
+
+  if (!moveLayers.empty()) {
+    auto matrix = moveLayers.at(0)->matrix();
     position[0] = matrix.getTranslateX();
     position[1] = matrix.getTranslateY();
   }
-  
+
   return position;
 }
 
 std::vector<float> TGFXBaseView::getMoveLayerGlobalMatrix() {
   std::vector<float> matrixInfo = {1.0f, 1.0f, 0.0f, 0.0f};
-  
-  if (moveLayer != nullptr) {
+
+  if (!moveLayers.empty()) {
+    auto moveLayer = moveLayers.at(0);
     auto origin = moveLayer->localToGlobal(tgfx::Point::Make(0, 0));
     auto unitX = moveLayer->localToGlobal(tgfx::Point::Make(1, 0));
     auto unitY = moveLayer->localToGlobal(tgfx::Point::Make(0, 1));
-    
+
     float scaleX = unitX.x - origin.x;
     float scaleY = unitY.y - origin.y;
-    
+
     matrixInfo[0] = scaleX;
     matrixInfo[1] = scaleY;
     matrixInfo[2] = origin.x;
     matrixInfo[3] = origin.y;
   }
-  
+
   return matrixInfo;
 }
 
@@ -462,7 +460,7 @@ void TGFXBaseView::markDirty() {
 
 void TGFXBaseView::onWheelEvent() {
   if (appHost) {
-    appHost->markDirty(); 
+    appHost->markDirty();
   }
 }
 
@@ -470,7 +468,7 @@ void TGFXBaseView::reapplyRenderSettings() {
   if (!appHost) {
     return;
   }
-  
+
   appHost->displayList.setRenderMode(static_cast<tgfx::RenderMode>(currentRenderMode));
   appHost->displayList.setAllowZoomBlur(currentAllowBlur);
   appHost->displayList.showDirtyRegions(currentShowDirtyRect);
@@ -479,12 +477,3 @@ void TGFXBaseView::reapplyRenderSettings() {
 }
 
 }  // namespace displaylist
-
-// Error: Undefined symbol: main
-// Note: A `main` function must be implemented as the entry point for the application.
-// Without it, the WebAssembly build will fail. Ensure that you have defined a `main` function
-// or correctly specified an alternative entry point during the build process.
-
-int main() {
-  return 0;
-}

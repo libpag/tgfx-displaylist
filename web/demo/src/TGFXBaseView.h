@@ -17,8 +17,8 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////
 #pragma once
 #include <emscripten/bind.h>
-#include "hello2d/LayerBuilder.h"
 #include "CoordinateTransformer.h"
+#include "hello2d/LayerBuilder.h"
 #include "tgfx/gpu/opengl/webgl/WebGLWindow.h"
 #include "tgfx/layers/ShapeLayer.h"
 #include "tgfx/layers/SolidColor.h"
@@ -50,7 +50,7 @@ class TGFXBaseView {
   bool selectMoveLayer(float pointX, float pointY);
 
   void moveHighlightLayer(float deltaX, float deltaY);
-  
+
   /**
    * 获取当前移动图层的全局变换矩阵信息
    * 返回数组: [scaleX, scaleY, translateX, translateY]
@@ -89,15 +89,15 @@ class TGFXBaseView {
   std::shared_ptr<tgfx::Layer> latestHighlightedLayer = nullptr;
   int highLightLayerIndex = -1;
 
-  std::shared_ptr<tgfx::Layer> moveLayer = nullptr;
-  
+  std::vector<std::shared_ptr<tgfx::Layer>> moveLayers = {};
+
   // 保存当前渲染设置，确保在重新构建layer tree时能够重新应用
   int currentRenderMode = 0;  // 0=Direct, 1=Partial, 2=Tiled
   bool currentAllowBlur = false;
   bool currentShowDirtyRect = false;
   int currentTileSize = 256;
   int currentMaxTileCount = 16;
-  
+
   // 重新应用所有渲染设置
   void reapplyRenderSettings();
 };
