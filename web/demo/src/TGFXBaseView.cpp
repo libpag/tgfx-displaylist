@@ -78,9 +78,13 @@ void TGFXBaseView::setImage(const std::string& name, tgfx::NativeImageRef native
 
 bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY) {
   lastDrawIndex = drawIndex;
-  lastZoom = zoom;
-  lastOffsetX = offsetX;
-  lastOffsetY = offsetY;
+
+  if (lastZoom != zoom || lastOffsetX != offsetX || lastOffsetY != offsetY) {
+    lastZoom = zoom;
+    lastOffsetX = offsetX;
+    lastOffsetY = offsetY;
+    appHost->updateZoomAndOffset(zoom, tgfx::Point(offsetX, offsetY));
+  }
 
   if (!appHost->isDirty()) {
     return false;
@@ -116,8 +120,6 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
     device->unlock();
     return true;
   }
-
-  appHost->updateZoomAndOffset(zoom, tgfx::Point(offsetX, offsetY));
 
   // 实时更新高亮线宽以保持视觉一致性
   updateHighlightLineWidth();
@@ -396,21 +398,6 @@ bool TGFXBaseView::resetHighlightLayer() {
   return true;
 }
 
-bool TGFXBaseView::resetMoveLayers() {
-  if (moveLayers.empty()) {
-    return false;
-  }
-
-  if (!appHost) {
-    return false;
-  }
-
-  moveLayers.clear();
-
-  appHost->markDirty();
-  return true;
-}
-
 bool TGFXBaseView::selectMoveLayer(float pointX, float pointY) {
   if (!appHost) {
     return false;
@@ -421,13 +408,22 @@ bool TGFXBaseView::selectMoveLayer(float pointX, float pointY) {
   if (layers.size() < 1) {
     return false;
   }
+  moveLayers.clear();
   auto layer = layers[0];
-  for (auto it : layers) {
-    if (it->mask() == layer) {
-      moveLayers.push_back(it);
+  if (layer->mask()) {
+    moveLayers.push_back(layer);
+    moveLayers.push_back(layer->mask());
+  } else {
+    for (auto it : layers) {
+      if (it->mask() == layer) {
+        moveLayers.push_back(it);
+      }
     }
+    moveLayers.push_back(layer);
   }
-  moveLayers.push_back(layer);
+  if (moveLayers.size() < 0) {
+    return false;
+  }
   return true;
 }
 

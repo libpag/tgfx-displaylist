@@ -47,8 +47,6 @@ class TGFXBaseView {
 
   bool resetHighlightLayer();
 
-  bool resetMoveLayers();
-
   void updateHighlightLineWidth();
 
   bool selectMoveLayer(float pointX, float pointY);

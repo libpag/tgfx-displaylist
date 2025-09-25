@@ -60,7 +60,6 @@ export class TGFXBaseView {
     public getMoveLayerPosition: () => number[];
     public getMoveLayerGlobalMatrix: () => number[];
     public markDirty: () => void;
-    public resetMoveLayers: () => void;
 }
 
 export class ShareData {

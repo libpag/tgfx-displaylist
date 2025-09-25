@@ -316,8 +316,6 @@ export class GestureManager {
                 const clientXY = ConvertCoordinates(event, canvas);
                 const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
 
-            } else {
-                shareData.tgfxBaseView.resetMoveLayers();
             }
 
             // 重置状态
