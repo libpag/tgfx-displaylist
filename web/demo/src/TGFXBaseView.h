@@ -53,6 +53,10 @@ class TGFXBaseView {
 
   void moveHighlightLayer(float deltaX, float deltaY);
 
+  bool updateSelectionBox(float pointX, float pointY);
+
+  bool resetSelectBox();
+
   /**
    * 获取当前移动图层的全局变换矩阵信息
    * 返回数组: [scaleX, scaleY, translateX, translateY]
@@ -81,9 +85,9 @@ class TGFXBaseView {
   }
 
   int lastDrawIndex = -1;
-  float lastZoom = 0;
-  float lastOffsetX = 0;
-  float lastOffsetY = 0;
+  float lastZoom = 0.f;
+  float lastOffsetX = 0.f;
+  float lastOffsetY = 0.f;
 
  private:
   std::string canvasID = "";
@@ -92,6 +96,10 @@ class TGFXBaseView {
   int highLightLayerIndex = -1;
 
   std::vector<std::shared_ptr<tgfx::Layer>> moveLayers = {};
+
+  std::shared_ptr<tgfx::ShapeLayer> selectBoxLayer = nullptr;
+
+  float selectBoxPointX = 0.f, selectBoxPointY = 0.f;
 
   // 保存当前渲染设置，确保在重新构建layer tree时能够重新应用
   int currentRenderMode = 0;  // 0=Direct, 1=Partial, 2=Tiled

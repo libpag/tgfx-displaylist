@@ -304,10 +304,7 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
 
     if (!globalContentBounds.contains(x, y)) {
       // 鼠标不在内容边界内，移除现有高亮
-      if (latestHighlightedLayer) {
-        resetHighlightLayer();
-      }
-      return false;
+      return resetHighlightLayer();
     }
 
     if (layer == latestHighlightedLayer) {
@@ -406,6 +403,8 @@ bool TGFXBaseView::selectMoveLayer(float pointX, float pointY) {
   auto layers = appHost->getLayersUnderPoint(pointX, pointY);
 
   if (layers.size() < 1) {
+    selectBoxPointX = pointX;
+    selectBoxPointY = pointY;
     return false;
   }
   moveLayers.clear();
@@ -442,6 +441,40 @@ void TGFXBaseView::moveHighlightLayer(float deltaX, float deltaY) {
   }
 
   appHost->markDirty();
+}
+
+bool TGFXBaseView::updateSelectionBox(float pointX, float pointY) {
+  if (!appHost) {
+    return false;
+  }
+  if (selectBoxPointX == 0.f || selectBoxPointY == 0.f) {
+    return false;
+  }
+
+  if (!selectBoxLayer) {
+    selectBoxLayer = tgfx::ShapeLayer::Make();
+    selectBoxLayer->setName("selectBoxLayer");
+    auto fillStyle = tgfx::SolidColor::Make(tgfx::Color::FromRGBA(229, 235, 211, 100));
+    selectBoxLayer->setFillStyle(fillStyle);
+    selectBoxLayer->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41)));
+  }
+  auto rectPath = tgfx::Path();
+  rectPath.addRect({selectBoxPointX, selectBoxPointY, pointX, pointY});
+  selectBoxLayer->setPath(rectPath);
+  appHost->displayList.root()->addChild(selectBoxLayer);
+
+  return true;
+}
+
+bool TGFXBaseView::resetSelectBox() {
+  if (!selectBoxLayer) {
+    return false;
+  }
+
+  selectBoxLayer->removeFromParent();
+  selectBoxLayer = nullptr;
+
+  return true;
 }
 
 std::vector<float> TGFXBaseView::getMoveLayerPosition() {

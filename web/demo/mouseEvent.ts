@@ -42,6 +42,7 @@ let isMouseDown = false;
 let hasMoved = false;
 let lastPointX = 0;
 let lastPointY = 0;
+let moveSelectBox = false;
 
 function ThrottleWithTrailing(delay: number) {
     return function (
@@ -259,14 +260,16 @@ export class GestureManager {
 
             // 只有当增量不为零时才处理移动
             if (screenDeltaX !== 0 || screenDeltaY !== 0) {
-                // 直接使用屏幕增量，让后端处理坐标变换
-                try {
-                    shareData.tgfxBaseView?.moveHighlightLayer(screenDeltaX, screenDeltaY);
-                } catch (error) {
-                    console.error('移动图层时出错:', error);
+                if (moveSelectBox) {
+                    shareData.tgfxBaseView?.updateSelectionBox(clientXY.clientX, clientXY.clientY);
+                } else {
+                    // 直接使用屏幕增量，让后端处理坐标变换
+                    try {
+                        shareData.tgfxBaseView?.moveHighlightLayer(screenDeltaX, screenDeltaY);
+                    } catch (error) {
+                        console.error('移动图层时出错:', error);
+                    }
                 }
-
-                // 更新lastPoint
                 lastPointX = clientXY.clientX;
                 lastPointY = clientXY.clientY;
 
@@ -297,14 +300,15 @@ export class GestureManager {
             const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
 
             shareData.tgfxBaseView?.resetHighlightLayer();
-            if (shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY)) {
-                lastPointX = clientXY.clientX;
-                lastPointY = clientXY.clientY;
-                isMouseDown = true;
-                hasMoved = false;
-
-
+            if (!shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY)) {
+                // 未找到可移动的图层，说明点击的是空白区域
+                // 开始框选操作
+                moveSelectBox = true;
             }
+            lastPointX = clientXY.clientX;
+            lastPointY = clientXY.clientY;
+            isMouseDown = true;
+            hasMoved = false;
             shareData.tgfxBaseView?.markDirty();
             animationLoop(shareData);
         }
@@ -312,12 +316,16 @@ export class GestureManager {
 
     public onMouseUp(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
         if (event.button === 0) { // 判断是否为左键
-            if (!hasMoved) {
+            if (hasMoved) {
+                if (moveSelectBox) {
+                    shareData.tgfxBaseView.resetSelectBox();
+                    moveSelectBox = false;
+                }
+
+            } else {
                 const clientXY = ConvertCoordinates(event, canvas);
                 const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
-
             }
-
             // 重置状态
             isMouseDown = false;
             hasMoved = false;

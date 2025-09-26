@@ -40,7 +40,9 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("getMoveLayerPosition", &TGFXBaseView::getMoveLayerPosition)
       .function("getMoveLayerGlobalMatrix", &TGFXBaseView::getMoveLayerGlobalMatrix)
       .function("markDirty", &TGFXBaseView::markDirty)
-      .function("onWheelEvent", &TGFXBaseView::onWheelEvent);
+      .function("onWheelEvent", &TGFXBaseView::onWheelEvent)
+      .function("updateSelectionBox", &TGFXBaseView::updateSelectionBox)
+      .function("resetSelectBox", &TGFXBaseView::resetSelectBox);
 
   class_<TGFXThreadsView, base<TGFXBaseView>>("TGFXThreadsView")
       .smart_ptr<std::shared_ptr<TGFXThreadsView>>("TGFXThreadsView")
