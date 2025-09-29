@@ -21,9 +21,8 @@
 #include "tgfx/core/Point.h"
 #include "tgfx/layers/ImageLayer.h"
 #include "tgfx/layers/TextLayer.h"
-//
-//
-//
+#include "tgfx/layers/ShapeLayer.h"
+
 using namespace emscripten;
 
 namespace displaylist {
@@ -56,7 +55,7 @@ bool TGFXBaseView::updateSize(float devicePixelRatio) {
     }
   }
 
-  int width = 0; 
+  int width = 0;
   int height = 0;
   emscripten_get_canvas_element_size(canvasID.c_str(), &width, &height);
 
@@ -213,6 +212,7 @@ void TGFXBaseView::setMaxTileCount(int count) {
   appHost->displayList.setMaxTileCount(count);
   appHost->markDirty();
 }
+
 std::vector<std::string> TGFXBaseView::getDrawerNames() {
   auto names = hello2d::LayerBuilder::Names();
   return names;
@@ -222,8 +222,6 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
   if (!appHost) {
     return false;
   }
-
-
 
   auto layers = appHost->getLayersUnderPoint(x, y);
   
@@ -407,9 +405,9 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
     }
 
     // 若存在选中效果，仅当本次高亮目标与选中目标为同一图层时隐藏，避免双重描边
-    if (selectedTargetLayer && selectedTargetLayer == layer) {
-      highlightLayer->setVisible(false);
-    }
+    // if (selectedTargetLayer && selectedTargetLayer == layer) {
+    //   highlightLayer->setVisible(false);
+    // }
 
     auto rootLayer = appHost->displayList.root();
     if (rootLayer) {
@@ -647,57 +645,7 @@ std::vector<float> TGFXBaseView::getMoveLayerGlobalMatrix() {
   return matrixInfo;
 }
 
-void TGFXBaseView::markDirty() {
-  if (appHost) {
-    appHost->markDirty();
-  }
-}
-
-void TGFXBaseView::onWheelEvent() {
-  if (appHost) {
-    // 仅标记脏区，实际更新在下一帧 draw(zoom, ...) 中按最新缩放统一执行
-    appHost->markDirty();
-  }
-}
-
-void TGFXBaseView::reapplyRenderSettings() {
-  if (!appHost) {
-    return;
-  }
-
-  appHost->displayList.setRenderMode(static_cast<tgfx::RenderMode>(currentRenderMode));
-  appHost->displayList.setAllowZoomBlur(currentAllowBlur);
-  appHost->displayList.showDirtyRegions(currentShowDirtyRect);
-  appHost->displayList.setTileSize(currentTileSize);
-  appHost->displayList.setMaxTileCount(currentMaxTileCount);
-}
-
-void TGFXBaseView::updateHighlightLineWidth() {
-  if (!latestHighlightedLayer || !appHost) {
-    return;
-  }
-
-  // 获取高亮图层，我们知道它是 ShapeLayer 类型（在 highlightLayerAndCheckRedraw 中创建）
-  auto shapeLayer = std::static_pointer_cast<tgfx::ShapeLayer>(latestHighlightedLayer);
-
-  // 获取高亮图层的变换矩阵
-  auto globalMatrix = latestHighlightedLayer->matrix();
-
-  // 计算缩放比例，调整线宽以保持视觉一致性
-  // 同时考虑全局缩放(lastZoom)和图层变换矩阵
-  float scaleX = globalMatrix.getScaleX();
-  float scaleY = globalMatrix.getScaleY();
-  float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
-
-  // 结合全局缩放和图层缩放计算最终的缩放比例
-  float totalScale = layerAvgScale * lastZoom;
-  float adjustedLineWidth =
-      totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
-
-  // 更新线宽
-  shapeLayer->setLineWidth(adjustedLineWidth);
-}
-
+// 选中效果相关方法实现
 bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
   if (!appHost) {
     return false;
@@ -819,7 +767,7 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
       return false;
     }
 
-    // 如果点击的是已经选中的图层，直接返回；避免重复创建导致“越点越大”
+    // 如果点击的是已经选中的图层，直接返回；避免重复创建导致"越点越大"
     if (layer == selectedTargetLayer) {
       printf("点击的是已选中的图层，保持选中不重复创建\n");
       appHost->markDirty();
@@ -828,8 +776,6 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
 
     // 总是先清理旧的选择框，避免重复
     resetSelectedLayer();
-
-
 
     printf("创建选中边框\n");
 
@@ -859,11 +805,10 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
     float adjustedLineWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
     
     selectionBorder->setLineWidth(adjustedLineWidth);
-    // 与高亮一致，使用 Inside，减少缩放时的微小外泄导致“分层”
+    // 与高亮一致，使用 Inside，减少缩放时的微小外泄导致"分层"
     selectionBorder->setStrokeAlign(tgfx::StrokeAlign::Inside);
     selectionBorder->setMatrix(globalMatrix);
-
-    // 选中边框路径保持与高亮一致：始终使用选中层的原始内容边界，不因遮罩替换
+    selectionBorder->setName("__SELECTION_BORDER__");
 
     // 添加到根图层（与高亮完全一致）
     auto rootLayer = appHost->displayList.root();
@@ -887,8 +832,6 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
     }
 
     printf("选中效果创建完成\n");
-
-
 
   } else {
     printf("没有找到图层，取消选中\n");
@@ -975,7 +918,8 @@ void TGFXBaseView::createCornerHandles(std::shared_ptr<tgfx::Layer> layer) {
     handle->setName("__CORNER_HANDLE__");
 
     rootLayer->addChild(handle);
-    cornerHandles.push_back(handle);
+    // 将 ShapeLayer 转换为 Layer 存储在 cornerHandles 中
+    cornerHandles.push_back(std::static_pointer_cast<tgfx::Layer>(handle));
   }
 }
 
@@ -1019,12 +963,14 @@ void TGFXBaseView::updateCornerHandles() {
       if (!handle) {
         continue;
       }
+      // 将 Layer 转换为 ShapeLayer 以调用 setPath 和 setLineWidth
+      auto shapeHandle = std::static_pointer_cast<tgfx::ShapeLayer>(handle);
       const auto& c = corners[i];
       tgfx::Path path;
       path.addRect(tgfx::Rect::MakeXYWH(c.x - handleSize / 2, c.y - handleSize / 2, handleSize, handleSize));
-      handle->setPath(path);
-      handle->setLineWidth(borderWidth);
-      handle->setMatrix(globalMatrix);
+      shapeHandle->setPath(path);
+      shapeHandle->setLineWidth(borderWidth);
+      shapeHandle->setMatrix(globalMatrix);
       // 非移动状态下确保可见
       handle->setVisible(true);
     }
@@ -1032,6 +978,32 @@ void TGFXBaseView::updateCornerHandles() {
     removeCornerHandles();
     createCornerHandles(selectedTargetLayer);
   }
+}
+
+void TGFXBaseView::updateSelectedLineWidth() {
+  if (!appHost || !latestSelectedLayer || !selectedTargetLayer) {
+    return;
+  }
+  // latestSelectedLayer 是 ShapeLayer
+  auto shapeLayer = std::static_pointer_cast<tgfx::ShapeLayer>(latestSelectedLayer);
+
+  // 与角控制器一致：使用选中目标图层的全局矩阵计算缩放
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  float scaleX = globalMatrix.getScaleX();
+  float scaleY = globalMatrix.getScaleY();
+  float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
+  float totalScale = layerAvgScale * lastZoom;
+  float adjustedLineWidth =
+      totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
+
+  // 每帧同步几何路径为选中目标的原始内容边界，避免父子/遮罩导致的几何滞留
+  tgfx::Path rectPath;
+  rectPath.addRect(selectedTargetLayer->getBounds(nullptr, true));
+  shapeLayer->setPath(rectPath);
+
+  // 同步线宽和矩阵（位置），确保与目标图层保持一致
+  shapeLayer->setMatrix(globalMatrix);
+  shapeLayer->setLineWidth(adjustedLineWidth);
 }
 
 void TGFXBaseView::setSelectionLineWidth(float width) {
@@ -1062,29 +1034,54 @@ float TGFXBaseView::getHandleSizeFactor() const {
   return s_handleSizeFactor;
 }
 
-void displaylist::TGFXBaseView::updateSelectedLineWidth() {
-  if (!appHost || !latestSelectedLayer || !selectedTargetLayer) {
+void TGFXBaseView::markDirty() {
+  if (appHost) {
+    appHost->markDirty();
+  }
+}
+
+void TGFXBaseView::onWheelEvent() {
+  if (appHost) {
+    // 仅标记脏区，实际更新在下一帧 draw(zoom, ...) 中按最新缩放统一执行
+    appHost->markDirty();
+  }
+}
+
+void TGFXBaseView::reapplyRenderSettings() {
+  if (!appHost) {
     return;
   }
-  // latestSelectedLayer 是 ShapeLayer
-  auto shapeLayer = std::static_pointer_cast<tgfx::ShapeLayer>(latestSelectedLayer);
 
-  // 与角控制器一致：使用选中目标图层的全局矩阵计算缩放
-  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  appHost->displayList.setRenderMode(static_cast<tgfx::RenderMode>(currentRenderMode));
+  appHost->displayList.setAllowZoomBlur(currentAllowBlur);
+  appHost->displayList.showDirtyRegions(currentShowDirtyRect);
+  appHost->displayList.setTileSize(currentTileSize);
+  appHost->displayList.setMaxTileCount(currentMaxTileCount);
+}
+
+void TGFXBaseView::updateHighlightLineWidth() {
+  if (!latestHighlightedLayer || !appHost) {
+    return;
+  }
+
+  // 获取高亮图层，我们知道它是 ShapeLayer 类型（在 highlightLayerAndCheckRedraw 中创建）
+  auto shapeLayer = std::static_pointer_cast<tgfx::ShapeLayer>(latestHighlightedLayer);
+
+  // 获取高亮图层的变换矩阵
+  auto globalMatrix = latestHighlightedLayer->matrix();
+
+  // 计算缩放比例，调整线宽以保持视觉一致性
+  // 同时考虑全局缩放(lastZoom)和图层变换矩阵
   float scaleX = globalMatrix.getScaleX();
   float scaleY = globalMatrix.getScaleY();
   float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
+
+  // 结合全局缩放和图层缩放计算最终的缩放比例
   float totalScale = layerAvgScale * lastZoom;
   float adjustedLineWidth =
       totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
 
-  // 每帧同步几何路径为选中目标的原始内容边界，避免父子/遮罩导致的几何滞留
-  tgfx::Path rectPath;
-  rectPath.addRect(selectedTargetLayer->getBounds(nullptr, true));
-  shapeLayer->setPath(rectPath);
-
-  // 同步线宽和矩阵（位置），确保与目标图层保持一致
-  shapeLayer->setMatrix(globalMatrix);
+  // 更新线宽
   shapeLayer->setLineWidth(adjustedLineWidth);
 }
 

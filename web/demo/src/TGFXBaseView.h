@@ -51,23 +51,6 @@ class TGFXBaseView {
 
   void updateHighlightLineWidth();
 
-  // 选中效果相关方法
-  bool selectLayerAndCheckRedraw(float x, float y);
-  bool resetSelectedLayer();
-  void createCornerHandles(std::shared_ptr<tgfx::Layer> layer);
-  void removeCornerHandles();
-  void updateSelectedLineWidth();
-  void updateCornerHandles();
-  void restoreSelectionVisibility();
-  void resetMoveState();
-
-  // 公布参数：选中线宽与角控制器大小因子
- public:
-  void setSelectionLineWidth(float width);
-  float getSelectionLineWidth() const;
-  void setHandleSizeFactor(float factor);
-  float getHandleSizeFactor() const;
-
   bool selectMoveLayer(float pointX, float pointY);
 
   void moveHighlightLayer(float deltaX, float deltaY);
@@ -80,6 +63,24 @@ class TGFXBaseView {
 
   // 获取当前选中图层的位置信息（用于调试）
   std::vector<float> getMoveLayerPosition();
+
+  // 选中效果相关方法
+  bool selectLayerAndCheckRedraw(float x, float y);
+  bool resetSelectedLayer();
+
+  // 角控制器相关方法
+  void createCornerHandles(std::shared_ptr<tgfx::Layer> layer);
+  void removeCornerHandles();
+  void updateCornerHandles();
+
+  // 选中边框线宽更新
+  void updateSelectedLineWidth();
+
+  // 线宽和角控制器大小配置方法
+  void setSelectionLineWidth(float width);
+  float getSelectionLineWidth() const;
+  void setHandleSizeFactor(float factor);
+  float getHandleSizeFactor() const;
 
   void markDirty();
   void onWheelEvent();
@@ -110,13 +111,12 @@ class TGFXBaseView {
   std::shared_ptr<tgfx::Layer> latestHighlightedLayer = nullptr;
   int highLightLayerIndex = -1;
 
-  // 选中效果相关
+  std::vector<std::shared_ptr<tgfx::Layer>> moveLayers = {};
+
+  // 选中效果相关成员变量
   std::shared_ptr<tgfx::Layer> latestSelectedLayer = nullptr;
   std::shared_ptr<tgfx::Layer> selectedTargetLayer = nullptr;
-  std::vector<std::shared_ptr<tgfx::ShapeLayer>> cornerHandles = {};
-  int selectedLayerIndex = -1;
-
-  std::vector<std::shared_ptr<tgfx::Layer>> moveLayers = {};
+  std::vector<std::shared_ptr<tgfx::Layer>> cornerHandles = {};
   bool isMoving = false;
 
   // 保存当前渲染设置，确保在重新构建layer tree时能够重新应用
@@ -129,9 +129,8 @@ class TGFXBaseView {
   // 重新应用所有渲染设置
   void reapplyRenderSettings();
 
-  // 静态成员变量：全局高亮线宽配置
+  // 静态成员变量：全局高亮线宽配置和角控制器大小比例
   static float s_highlightLineWidth;
-  // 角控制器大小与线宽的比例因子（默认 3.0）
   static float s_handleSizeFactor;
 };
 }  // namespace displaylist
