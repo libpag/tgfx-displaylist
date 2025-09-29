@@ -313,9 +313,13 @@ export class GestureManager {
     public onMouseUp(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
         if (event.button === 0) { // 判断是否为左键
             if (!hasMoved) {
+                // 单击事件：调用选中方法
                 const clientXY = ConvertCoordinates(event, canvas);
                 const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
-
+                
+                console.log('点击选中，坐标:', worldCoords.worldX, worldCoords.worldY);
+                const selected = shareData.tgfxBaseView?.selectLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
+                console.log('选中结果:', selected);
             } else {
                 shareData.tgfxBaseView.resetMoveLayers();
             }
@@ -323,6 +327,9 @@ export class GestureManager {
             // 重置状态
             isMouseDown = false;
             hasMoved = false;
+            
+            shareData.tgfxBaseView?.markDirty();
+            animationLoop(shareData);
         }
     }
 

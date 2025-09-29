@@ -35,6 +35,8 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("setShowDirtyRect", &TGFXBaseView::setShowDirtyRect)
       .function("highlightLayerAndCheckRedraw", &TGFXBaseView::highlightLayerAndCheckRedraw)
       .function("resetHighlightLayer", &TGFXBaseView::resetHighlightLayer)
+      .function("selectLayerAndCheckRedraw", &TGFXBaseView::selectLayerAndCheckRedraw)
+      .function("resetSelectedLayer", &TGFXBaseView::resetSelectedLayer)
       .function("selectMoveLayer", &TGFXBaseView::selectMoveLayer)
       .function("moveHighlightLayer", &TGFXBaseView::moveHighlightLayer)
       .function("getMoveLayerPosition", &TGFXBaseView::getMoveLayerPosition)
