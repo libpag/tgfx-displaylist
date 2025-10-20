@@ -24,13 +24,13 @@
 #include "tgfx/layers/ShapeLayer.h"
 
 using namespace emscripten;
-
+//2
 namespace displaylist {
 
 // 默认高亮线宽为 5.0f
-float TGFXBaseView::s_highlightLineWidth = 5.0f;
+float TGFXBaseView::s_highlightLineWidth = 3.0f;
 // 角控制器大小比例（相对于线宽）
-float TGFXBaseView::s_handleSizeFactor = 3.0f;
+float TGFXBaseView::s_handleSizeFactor = 2.0f;
 
 TGFXBaseView::TGFXBaseView(const std::string& canvasID) : canvasID(canvasID) {
   appHost = std::make_shared<hello2d::AppHost>();
@@ -38,6 +38,28 @@ TGFXBaseView::TGFXBaseView(const std::string& canvasID) : canvasID(canvasID) {
   lastZoom = 0;
   lastOffsetX = 0;
   lastOffsetY = 0;
+  
+  // 初始化鼠标状态管理器
+  mouseStateManager = std::make_unique<MouseStateManager>();
+  
+  // 设置回调函数
+  mouseStateManager->setLayerDetectionCallback([this](float x, float y) -> std::shared_ptr<tgfx::Layer> {
+    std::vector<std::shared_ptr<tgfx::Layer>> allLayers;
+    return selectBestLayerAtPoint(x, y, allLayers);
+  });
+  
+  mouseStateManager->setCornerHandleDetectionCallback([this](float x, float y) -> bool {
+    return isPointInCornerHandle(x, y);
+  });
+  
+  mouseStateManager->setSelectionBorderDetectionCallback([this](float x, float y) -> bool {
+    return isPointInSelectionBorder(x, y);
+  });
+  
+  mouseStateManager->setCursorChangeCallback([](CursorStyle /*style*/) {
+    // 光标变化回调，可以在这里添加额外的处理逻辑
+    printf("[光标回调] 光标样式已更改\n");
+  });
 }
 
 bool TGFXBaseView::updateSize(float devicePixelRatio) {
@@ -55,7 +77,7 @@ bool TGFXBaseView::updateSize(float devicePixelRatio) {
     }
   }
 
-  int width = 0;
+  int width = 0; 
   int height = 0;
   emscripten_get_canvas_element_size(canvasID.c_str(), &width, &height);
 
@@ -65,7 +87,7 @@ bool TGFXBaseView::updateSize(float devicePixelRatio) {
   auto sizeChanged = appHost->updateScreen(width, height, devicePixelRatio);
 
   if (sizeChanged) {
-    window = nullptr;
+    window.reset();
     appHost->markDirty();
   }
   resetHighlightLayer();
@@ -73,11 +95,24 @@ bool TGFXBaseView::updateSize(float devicePixelRatio) {
   // 画布大小变化时，如果有选中的图层，标记需要重新创建选中效果
   // 让draw方法在下次调用时用正确的缩放值重新创建
   if (selectedTargetLayer) {
-    // 保存选中目标，但清除选中效果，让draw方法重新创建
-    auto tempSelectedLayer = selectedTargetLayer;
-    resetSelectedLayer();
-    selectedTargetLayer = tempSelectedLayer;
-    appHost->markDirty();
+    // 验证选中目标是否仍然有效
+    if (validateSelectionState() && selectedTargetLayer) {
+      // 保存有效的选中目标，清除选中效果，让draw方法重新创建
+      auto tempSelectedLayer = selectedTargetLayer;
+      
+      // 只清除视觉效果，不清除目标引用
+      if (latestSelectedLayer) {
+        if (latestSelectedLayer->parent()) {
+          latestSelectedLayer->removeFromParent();
+        }
+        latestSelectedLayer.reset();
+      }
+      removeCornerHandles();
+      
+      // 恢复目标引用
+      selectedTargetLayer = tempSelectedLayer;
+      appHost->markDirty();
+    }
   }
   
   return sizeChanged;
@@ -91,6 +126,9 @@ void TGFXBaseView::setImage(const std::string& name, tgfx::NativeImageRef native
 }
 
 bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY) {
+  // 在绘制前验证状态
+  validateSelectionState();
+  
   lastDrawIndex = drawIndex;
   lastZoom = zoom;
   lastOffsetX = offsetX;
@@ -115,13 +153,13 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
 
   auto device = window->getDevice();
   if (!device) {
-    window = nullptr;
+    window.reset();
     return true;
   }
 
   auto context = device->lockContext();
   if (!context) {
-    window = nullptr;
+    window.reset();
     return true;
   }
 
@@ -150,18 +188,55 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
     latestSelectedLayer = selectionBorder;
     
     // 重新创建角控制器
+    const std::string& selectedLayerName = selectedTargetLayer->name();
+    auto selectedLayerType = selectedTargetLayer->type();
+    const char* typeStr = "Unknown";
+    switch(selectedLayerType) {
+      case tgfx::LayerType::Image: typeStr = "Image"; break;
+      case tgfx::LayerType::Text: typeStr = "Text"; break;
+      case tgfx::LayerType::Shape: typeStr = "Shape"; break;
+      case tgfx::LayerType::Solid: typeStr = "Solid"; break;
+      case tgfx::LayerType::Layer: typeStr = "Layer"; break;
+    }
+    printf("[角控制器] 来源：draw方法（画布大小变化），目标图层：'%s'(类型:%s)\n", 
+           selectedLayerName.c_str(), typeStr);
     createCornerHandles(selectedTargetLayer);
     if (rootLayer) {
       for (auto handle : cornerHandles) {
         rootLayer->addChild(handle);
       }
+      printf("[角控制器] draw方法已将 %zu 个角控制器添加到根图层\n", cornerHandles.size());
     }
   }
 
-  // 实时更新高亮/选中线宽以保持视觉一致性
-  updateHighlightLineWidth();
-  updateSelectedLineWidth();
-  updateCornerHandles();
+  // 只在有高亮或选中图层时才更新，避免无必要的更新导致持续渲染
+  // 并且只在缩放或偏移发生变化时才更新（保持视觉一致性）
+  static float lastUpdateZoom = 0;
+  static float lastUpdateOffsetX = 0;
+  static float lastUpdateOffsetY = 0;
+  
+  
+  bool needsUpdate = (lastUpdateZoom != zoom || lastUpdateOffsetX != offsetX || lastUpdateOffsetY != offsetY);
+  
+  if (needsUpdate) {
+    if (latestHighlightedLayer) {
+      updateHighlightLineWidth();
+    }
+    if (latestSelectedLayer) {
+      updateSelectedLineWidth();
+      updateCornerHandles();
+    }
+    
+    lastUpdateZoom = zoom;
+    lastUpdateOffsetX = offsetX;
+    lastUpdateOffsetY = offsetY;
+  } else {
+    // 即使 needsUpdate 为 false，也要在有选中图层时强制更新边框
+    // 这是为了防止缩放过程中浮点数精度问题导致的边框消失
+    if (latestSelectedLayer) {
+      updateSelectedLineWidth();
+    }
+  }
 
   auto canvas = surface->getCanvas();
   if (canvas == nullptr) {
@@ -225,114 +300,44 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
 
   auto layers = appHost->getLayersUnderPoint(x, y);
   
-  // 前置判断：如果悬停的是控制图层，直接返回
-  if (!layers.empty()) {
-    const std::string& layerName = layers[0]->name();
-    if (layerName == "__CORNER_HANDLE__" || layerName == "__SELECTION_BORDER__") {
-      return false;
-    }
-  }
-
   if (layers.size() > 0) {
-    auto layer = layers[0];
-
-    // 调试信息：打印所有找到的图层
-    printf("=== Found %zu layers at point (%.1f, %.1f) ===\n", layers.size(), x, y);
-    for (size_t i = 0; i < layers.size(); i++) {
-      auto layerType = layers[i]->type();
-      const char* typeName = "Unknown";
-      switch (layerType) {
-        case tgfx::LayerType::Image:
-          typeName = "Image";
-          break;
-        case tgfx::LayerType::Text:
-          typeName = "Text";
-          break;
-        case tgfx::LayerType::Shape:
-          typeName = "Shape";
-          break;
-        case tgfx::LayerType::Solid:
-          typeName = "Solid";
-          break;
-        case tgfx::LayerType::Layer:
-          typeName = "Layer";
-          break;
+    // 先检查是否包含角控制器，如果包含则直接返回，不进行高亮
+    for (auto it : layers) {
+      const std::string& layerName = it->name();
+      if (layerName == "__CORNER_HANDLE__") {
+        return false;
       }
-      printf("  [%zu] Type: %s\n", i, typeName);
     }
-
-    // 优先选择真正的内容图层，使用分级选择策略
+    
+    // 如果没有控制图层，按层级顺序选择最顶层的图层
     std::shared_ptr<tgfx::Layer> selectedLayer = nullptr;
 
-    // 第一优先级：Image 和 Text（真正的内容层）
     for (auto it : layers) {
-      auto layerType = it->type();
-      if (layerType == tgfx::LayerType::Image || layerType == tgfx::LayerType::Text) {
-        selectedLayer = it;
-        printf(">>> Selected HIGH-PRIORITY layer type: %s\n",
-               layerType == tgfx::LayerType::Image ? "Image" : "Text");
-        break;
+      const std::string& layerName = it->name();
+      // 跳过选中边框，继续检查后续图层
+      if (layerName == "__SELECTION_BORDER__") {
+        continue;
       }
-    }
-
-    // 第二优先级：检查 Shape 层是否是遮罩层，如果是则选择被遮罩的层
-    if (!selectedLayer) {
-      for (auto it : layers) {
-        auto layerType = it->type();
-        if (layerType == tgfx::LayerType::Shape || layerType == tgfx::LayerType::Solid) {
-          // 检查这个 Shape 层是否是某个层的遮罩
-          std::shared_ptr<tgfx::Layer> maskedLayer = nullptr;
-
-          // 遍历所有层，找到使用当前 Shape 作为遮罩的层
-          for (auto checkLayer : layers) {
-            if (checkLayer->mask() == it) {
-              maskedLayer = checkLayer;
-              printf(">>> Found masked layer! Shape is mask for layer type: %s\n",
-                     checkLayer->type() == tgfx::LayerType::Image   ? "Image"
-                     : checkLayer->type() == tgfx::LayerType::Text  ? "Text"
-                     : checkLayer->type() == tgfx::LayerType::Shape ? "Shape"
-                     : checkLayer->type() == tgfx::LayerType::Solid ? "Solid"
-                     : checkLayer->type() == tgfx::LayerType::Layer ? "Layer"
-                                                                    : "Unknown");
-              break;
-            }
-          }
-
-          // 如果找到了被遮罩的层，优先选择被遮罩的层
-          if (maskedLayer) {
-            selectedLayer = maskedLayer;
-            printf(">>> Selected MASKED layer type: %s\n",
-                   maskedLayer->type() == tgfx::LayerType::Image   ? "Image"
-                   : maskedLayer->type() == tgfx::LayerType::Text  ? "Text"
-                   : maskedLayer->type() == tgfx::LayerType::Shape ? "Shape"
-                   : maskedLayer->type() == tgfx::LayerType::Solid ? "Solid"
-                   : maskedLayer->type() == tgfx::LayerType::Layer ? "Layer"
-                                                                   : "Unknown");
-          } else {
-            selectedLayer = it;
-            printf(">>> Selected MEDIUM-PRIORITY layer type: %s\n",
-                   layerType == tgfx::LayerType::Shape ? "Shape" : "Solid");
-          }
-          break;
-        }
+      
+      // 如果这个图层与当前高亮的图层相同，尝试选择下一个图层（穿透效果）
+      if (it == latestHighlightedLayer) {
+        continue;
       }
+      
+      // 选择第一个（最顶层的）非选中边框且非当前高亮的图层
+      selectedLayer = it;
+      break;
     }
 
-    // 最后选择：使用第一个层（通常是容器层）
+    // 如果没有找到任何有效图层，清除现有高亮
     if (!selectedLayer) {
-      selectedLayer = layers[0];
-      printf(">>> Selected FALLBACK layer type: %s\n",
-             selectedLayer->type() == tgfx::LayerType::Layer ? "Layer" : "Unknown");
+      if (latestHighlightedLayer) {
+        resetHighlightLayer();
+      }
+      return false;
     }
 
-    layer = selectedLayer;
-    printf("=== Final selected layer type: %s ===\n\n",
-           layer->type() == tgfx::LayerType::Image   ? "Image"
-           : layer->type() == tgfx::LayerType::Text  ? "Text"
-           : layer->type() == tgfx::LayerType::Shape ? "Shape"
-           : layer->type() == tgfx::LayerType::Solid ? "Solid"
-           : layer->type() == tgfx::LayerType::Layer ? "Layer"
-                                                     : "Unknown");
+    auto layer = selectedLayer;
 
     // 如果没有找到有内容的图层，使用原来的遮罩逻辑
     auto selectedLayerType = layer->type();
@@ -345,22 +350,10 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
       }
     }
 
-    // 验证鼠标是否真的在图层的内容边界内
-    auto contentBounds = layer->getBounds(nullptr, true);
+    // 信任 getLayersUnderPoint 的命中测试结果，不需要额外的边界验证
     auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
-    auto globalContentBounds = globalMatrix.mapRect(contentBounds);
 
-    if (!globalContentBounds.contains(x, y)) {
-      // 鼠标不在内容边界内，移除现有高亮
-      if (latestHighlightedLayer) {
-        resetHighlightLayer();
-      }
-      return false;
-    }
-
-    if (layer == latestHighlightedLayer) {
-      return false;
-    }
+    // 已经在前面的循环中处理了相同图层的情况，这里不需要再检查
 
     if (highLightLayerIndex >= 0) {
       if (latestHighlightedLayer &&
@@ -368,10 +361,11 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
         return false;
       }
     }
+    
+    // 清除旧的高亮（允许对选中的图层也进行高亮）
     if (latestHighlightedLayer) {
       resetHighlightLayer();
     }
-
     auto highlightLayer = tgfx::ShapeLayer::Make();
     highlightLayer->setBlendMode(tgfx::BlendMode::SrcOver);
     auto rectPath = tgfx::Path();
@@ -404,15 +398,14 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
       highlightLayer->setPath(maskPath);
     }
 
-    // 若存在选中效果，仅当本次高亮目标与选中目标为同一图层时隐藏，避免双重描边
-    // if (selectedTargetLayer && selectedTargetLayer == layer) {
-    //   highlightLayer->setVisible(false);
-    // }
-
     auto rootLayer = appHost->displayList.root();
     if (rootLayer) {
-      // 若存在选中效果，确保高亮在选中之下（插入到选中索引位置）
-      if (latestSelectedLayer && latestSelectedLayer->parent() == rootLayer) {
+      // 如果当前图层是选中的图层，将高亮放在选中效果之上，这样两个效果都可见
+      if (latestSelectedLayer && latestSelectedLayer->parent() == rootLayer && layer == selectedTargetLayer) {
+        int selIndex = rootLayer->getChildIndex(latestSelectedLayer);
+        rootLayer->addChildAt(highlightLayer, selIndex + 1);
+      } else if (latestSelectedLayer && latestSelectedLayer->parent() == rootLayer) {
+        // 对于非选中图层，将高亮放在选中效果之下
         int selIndex = rootLayer->getChildIndex(latestSelectedLayer);
         rootLayer->addChildAt(highlightLayer, selIndex);
       } else {
@@ -425,6 +418,9 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
       parentLayer->addChildAt(highlightLayer, index + 1);
       highLightLayerIndex = parentLayer->getChildIndex(highlightLayer);
     }
+    
+    // 确保高亮图层始终可见，即使在选中状态下
+    highlightLayer->setVisible(true);
     latestHighlightedLayer = highlightLayer;
 
   } else {
@@ -450,13 +446,14 @@ bool TGFXBaseView::resetHighlightLayer() {
 
   if (highLightLayerIndex >= 0) {
     latestHighlightedLayer->removeFromParent();
-    latestHighlightedLayer = nullptr;
+    latestHighlightedLayer.reset();
     highLightLayerIndex = -1;
   }
 
   appHost->markDirty();
   return true;
 }
+
 
 bool TGFXBaseView::resetMoveLayers() {
   if (moveLayers.empty()) {
@@ -486,11 +483,24 @@ bool TGFXBaseView::resetMoveLayers() {
     // 角控制器基于 selectedTargetLayer 的原始边界与最新矩阵
     removeCornerHandles();
     if (selectedTargetLayer) {
+      const std::string& selectedLayerName = selectedTargetLayer->name();
+      auto selectedLayerType = selectedTargetLayer->type();
+      const char* typeStr = "Unknown";
+      switch(selectedLayerType) {
+        case tgfx::LayerType::Image: typeStr = "Image"; break;
+        case tgfx::LayerType::Text: typeStr = "Text"; break;
+        case tgfx::LayerType::Shape: typeStr = "Shape"; break;
+        case tgfx::LayerType::Solid: typeStr = "Solid"; break;
+        case tgfx::LayerType::Layer: typeStr = "Layer"; break;
+      }
+      printf("[角控制器] 来源：resetMoveLayers（移动结束），目标图层：'%s'(类型:%s)\n", 
+             selectedLayerName.c_str(), typeStr);
       createCornerHandles(selectedTargetLayer);
     }
     for (auto& handle : cornerHandles) {
       handle->setVisible(true);
     }
+    printf("[角控制器] resetMoveLayers 设置 %zu 个角控制器可见\n", cornerHandles.size());
 
     // 同步更新选中线宽，保证丝滑
     updateSelectedLineWidth();
@@ -520,51 +530,23 @@ bool TGFXBaseView::selectMoveLayer(float pointX, float pointY) {
 
   std::shared_ptr<tgfx::Layer> picked = nullptr;
 
-  // 优先选 Image/Text
+  // 统一使用层级顺序选择策略，与选中和高亮检测保持一致
   for (auto it : layers) {
+    // 跳过控制图层
+    const std::string& layerName = it->name();
+    if (layerName == "__CORNER_HANDLE__" || layerName == "__SELECTION_BORDER__") {
+      continue;
+    }
+    
+    // 跳过当前选中边框和角控制器（使用实例比较）
     if (it == latestSelectedLayer ||
         std::find(cornerHandles.begin(), cornerHandles.end(), it) != cornerHandles.end()) {
       continue;
     }
-    auto t = it->type();
-    if (t == tgfx::LayerType::Image || t == tgfx::LayerType::Text) {
-      picked = it;
-      break;
-    }
-  }
-
-  // 次选 Shape/Solid（如果是遮罩，转为其被遮罩的层）
-  if (!picked) {
-    for (auto it : layers) {
-      if (it == latestSelectedLayer ||
-          std::find(cornerHandles.begin(), cornerHandles.end(), it) != cornerHandles.end()) {
-        continue;
-      }
-      auto t = it->type();
-      if (t == tgfx::LayerType::Shape || t == tgfx::LayerType::Solid) {
-        std::shared_ptr<tgfx::Layer> masked = nullptr;
-        for (auto check : layers) {
-          if (check->mask() == it) {
-            masked = check;
-            break;
-          }
-        }
-        picked = masked ? masked : it;
-        break;
-      }
-    }
-  }
-
-  // 兜底：命中列表中第一个非叠加效果层
-  if (!picked) {
-    for (auto it : layers) {
-      if (it == latestSelectedLayer ||
-          std::find(cornerHandles.begin(), cornerHandles.end(), it) != cornerHandles.end()) {
-        continue;
-      }
-      picked = it;
-      break;
-    }
+    
+    // 选择第一个（最顶层的）非控制图层
+    picked = it;
+    break;
   }
 
   if (!picked) {
@@ -642,20 +624,23 @@ std::vector<float> TGFXBaseView::getMoveLayerGlobalMatrix() {
     matrixInfo[3] = origin.y;
   }
 
+  
   return matrixInfo;
 }
 
-// 选中效果相关方法实现
 bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
   if (!appHost) {
     return false;
   }
-
-  printf("=== 选中方法被调用，坐标: (%.1f, %.1f) ===\n", x, y);
+  
+  // 移动状态下禁用选中检测，避免事件冲突
+  if (isMoving) {
+    return false;
+  }
 
   auto layers = appHost->getLayersUnderPoint(x, y);
   
-  // 前置判断：如果点击的是控制图层，直接返回
+  // 前置判断：如果点击的是控制图层，直接返回，不改变选中状态
   if (!layers.empty()) {
     const std::string& layerName = layers[0]->name();
     if (layerName == "__CORNER_HANDLE__" || layerName == "__SELECTION_BORDER__") {
@@ -663,183 +648,91 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
     }
   }
 
-  if (layers.size() > 0) {
-    printf("找到 %zu 个图层\n", layers.size());
+  // 按层级顺序选择图层（最上面优先），与高亮检测逻辑保持一致
+  std::shared_ptr<tgfx::Layer> bestLayer = nullptr;
+  for (auto layer : layers) {
+    // 跳过控制图层
+    const std::string& layerName = layer->name();
+    if (layerName == "__CORNER_HANDLE__" || layerName == "__SELECTION_BORDER__") {
+      continue;
+    }
     
-    auto layer = layers[0];
-
-    // 使用与高亮相同的图层选择逻辑，但要排除选中效果图层和角控制器
-    std::shared_ptr<tgfx::Layer> selectedLayer = nullptr;
-
-    // 第一优先级：Image 和 Text（真正的内容层）
-    for (auto it : layers) {
-      // 跳过选中效果图层和角控制器
-      if (it == latestSelectedLayer || 
-          std::find(cornerHandles.begin(), cornerHandles.end(), it) != cornerHandles.end()) {
-        continue;
-      }
-      
-      auto layerType = it->type();
-      if (layerType == tgfx::LayerType::Image || layerType == tgfx::LayerType::Text) {
-        selectedLayer = it;
-        printf("选中高优先级图层: %s\n", layerType == tgfx::LayerType::Image ? "Image" : "Text");
-        break;
-      }
-    }
-
-    // 第二优先级：检查 Shape 层是否是遮罩层，如果是则选择被遮罩的层
-    if (!selectedLayer) {
-      for (auto it : layers) {
-        // 跳过选中效果图层和角控制器
-        if (it == latestSelectedLayer || 
-            std::find(cornerHandles.begin(), cornerHandles.end(), it) != cornerHandles.end()) {
-          continue;
-        }
-        
-        auto layerType = it->type();
-        if (layerType == tgfx::LayerType::Shape || layerType == tgfx::LayerType::Solid) {
-          std::shared_ptr<tgfx::Layer> maskedLayer = nullptr;
-
-          for (auto checkLayer : layers) {
-            if (checkLayer->mask() == it) {
-              maskedLayer = checkLayer;
-              break;
-            }
-          }
-
-          if (maskedLayer) {
-            selectedLayer = maskedLayer;
-            printf("选中被遮罩图层\n");
-          } else {
-            selectedLayer = it;
-            printf("选中中优先级图层: %s\n", layerType == tgfx::LayerType::Shape ? "Shape" : "Solid");
-          }
-          break;
-        }
-      }
-    }
-
-    // 最后选择：使用第一个层（但排除选中效果图层和角控制器）
-    if (!selectedLayer) {
-      for (auto it : layers) {
-        // 跳过选中效果图层和角控制器
-        if (it == latestSelectedLayer || 
-            std::find(cornerHandles.begin(), cornerHandles.end(), it) != cornerHandles.end()) {
-          continue;
-        }
-        selectedLayer = it;
-        printf("选中默认图层\n");
-        break;
-      }
-    }
-
-    // 如果没有找到有效的图层，移除现有选中
-    if (!selectedLayer) {
-      if (latestSelectedLayer) {
-        resetSelectedLayer();
-      }
-      return false;
-    }
-
-    layer = selectedLayer;
-
-    // 如果没有找到有内容的图层，使用原来的遮罩逻辑
-    auto selectedLayerType = layer->type();
-    if (selectedLayerType == tgfx::LayerType::Layer) {
-      for (auto it : layers) {
-        if (it->mask() == layer) {
-          layer = it;
-          break;
-        }
-      }
-    }
-
-    // 验证鼠标是否真的在图层的内容边界内
-    auto contentBounds = layer->getBounds(nullptr, true);
-    auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
-    auto globalContentBounds = globalMatrix.mapRect(contentBounds);
-
-    if (!globalContentBounds.contains(x, y)) {
-      printf("鼠标不在图层内容边界内\n");
-      if (latestSelectedLayer) {
-        resetSelectedLayer();
-      }
-      return false;
-    }
-
-    // 如果点击的是已经选中的图层，直接返回；避免重复创建导致"越点越大"
-    if (layer == selectedTargetLayer) {
-      printf("点击的是已选中的图层，保持选中不重复创建\n");
+    // 选择第一个（最顶层的）非控制图层
+    bestLayer = layer;
+    break;
+  }
+  
+  if (bestLayer) {
+    // 如果点击的是已经选中的图层，保持选中状态
+    if (bestLayer == selectedTargetLayer) {
       appHost->markDirty();
       return true;
     }
 
-    // 总是先清理旧的选择框，避免重复
+    // 先清理旧的选择框
     resetSelectedLayer();
 
-    printf("创建选中边框\n");
-
-    // 创建选中边框（完全复用高亮的实现逻辑）
+    // 创建选中边框
     auto selectionBorder = tgfx::ShapeLayer::Make();
     selectionBorder->setBlendMode(tgfx::BlendMode::SrcOver);
     auto rectPath = tgfx::Path();
-    // 使用原始图层边界，避免连续点击放大问题；若存在遮罩，改用遮罩边界以与高亮几何一致
-    rectPath.addRect(layer->getBounds(nullptr, true));
-    if (layer->mask() != nullptr) {
+    rectPath.addRect(bestLayer->getBounds(nullptr, true));
+    if (bestLayer->mask() != nullptr) {
       tgfx::Path maskPath;
-      maskPath.addRect(layer->mask()->getBounds());
+      maskPath.addRect(bestLayer->mask()->getBounds());
       selectionBorder->setPath(maskPath);
     } else {
       selectionBorder->setPath(rectPath);
     }
-    // 选中边框设为 80% 透明度
     selectionBorder->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41, 204)));
 
-    // 完全复用高亮的缩放逻辑，确保丝滑缩放
+    auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(bestLayer);
     float scaleX = globalMatrix.getScaleX();
     float scaleY = globalMatrix.getScaleY();
     float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
-    
-    // 结合全局缩放和图层缩放计算最终的缩放比例（与高亮完全一致）
     float totalScale = layerAvgScale * lastZoom;
     float adjustedLineWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
     
     selectionBorder->setLineWidth(adjustedLineWidth);
-    // 与高亮一致，使用 Inside，减少缩放时的微小外泄导致"分层"
     selectionBorder->setStrokeAlign(tgfx::StrokeAlign::Inside);
     selectionBorder->setMatrix(globalMatrix);
     selectionBorder->setName("__SELECTION_BORDER__");
 
-    // 添加到根图层（与高亮完全一致）
+    // 添加到根图层
     auto rootLayer = appHost->displayList.root();
     if (rootLayer) {
       rootLayer->addChild(selectionBorder);
     }
 
     latestSelectedLayer = selectionBorder;
-    selectedTargetLayer = layer;
+    selectedTargetLayer = bestLayer;
 
-    printf("创建角控制器\n");
-
-    // 创建四个角控制器，按高亮的最简实现：传入原始图层
-    createCornerHandles(layer);
+    // 创建四个角控制器
+    const std::string& bestLayerName = bestLayer->name();
+    auto bestLayerType = bestLayer->type();
+    const char* typeStr = "Unknown";
+    switch(bestLayerType) {
+      case tgfx::LayerType::Image: typeStr = "Image"; break;
+      case tgfx::LayerType::Text: typeStr = "Text"; break;
+      case tgfx::LayerType::Shape: typeStr = "Shape"; break;
+      case tgfx::LayerType::Solid: typeStr = "Solid"; break;
+      case tgfx::LayerType::Layer: typeStr = "Layer"; break;
+    }
+    printf("[角控制器] 来源：selectLayerAndCheckRedraw，目标图层：'%s'(类型:%s)\n", 
+           bestLayerName.c_str(), typeStr);
+    createCornerHandles(bestLayer);
 
     // 添加角控制器到根图层
     if (rootLayer) {
       for (auto handle : cornerHandles) {
         rootLayer->addChild(handle);
       }
+      printf("[角控制器] selectLayerAndCheckRedraw 已将 %zu 个角控制器添加到根图层\n", cornerHandles.size());
     }
-
-    printf("选中效果创建完成\n");
 
   } else {
-    printf("没有找到图层，取消选中\n");
-    if (latestSelectedLayer) {
-      resetSelectedLayer();
-    } else {
-      return false;
-    }
+    // 点击空白处，清除选中
+    resetSelectedLayer();
   }
 
   appHost->markDirty();
@@ -847,31 +740,78 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
 }
 
 bool TGFXBaseView::resetSelectedLayer() {
-  if (!latestSelectedLayer) {
-    return false;
+  printf("[状态管理] 开始重置选中状态\n");
+  
+  bool hasChanges = false;
+  
+  // 1. 移除角控制器（先处理子元素）
+  if (!cornerHandles.empty()) {
+    printf("[角控制器] resetSelectedLayer 中移除角控制器\n");
+    removeCornerHandles();
+    hasChanges = true;
   }
-
-  if (!appHost) {
-    return false;
+  
+  // 2. 移除选中边框
+  if (latestSelectedLayer) {
+    if (latestSelectedLayer->parent()) {
+      latestSelectedLayer->removeFromParent();
+    }
+    latestSelectedLayer.reset();
+    hasChanges = true;
   }
-
-  // 移除选中边框
-  latestSelectedLayer->removeFromParent();
-  latestSelectedLayer = nullptr;
-
-  // 移除角控制器
-  removeCornerHandles();
-
-  selectedTargetLayer = nullptr;
-
-  appHost->markDirty();
-  return true;
+  
+  // 3. 清空目标引用
+  if (selectedTargetLayer) {
+    selectedTargetLayer.reset();
+    hasChanges = true;
+  }
+  
+  // 4. 重置相关状态（保持原有逻辑）
+  if (isMoving) {
+    isMoving = false;
+    hasChanges = true;
+  }
+  
+  // 5. 标记需要重绘
+  if (hasChanges && appHost) {
+    appHost->markDirty();
+  }
+  
+  printf("[状态管理] 选中状态重置完成，有变化：%s\n", hasChanges ? "是" : "否");
+  return hasChanges;
 }
 
 void TGFXBaseView::createCornerHandles(std::shared_ptr<tgfx::Layer> layer) {
   if (!layer || !appHost) {
+    printf("[角控制器] createCornerHandles 参数无效，退出\n");
     return;
   }
+  
+  // 验证图层是否仍在图层树中
+  if (!layer->parent() && layer.get() != appHost->displayList.root()) {
+    printf("[角控制器] 目标图层已从图层树中移除，无法创建角控制器\n");
+    return;
+  }
+  
+  const std::string& layerName = layer->name();
+  auto layerType = layer->type();
+  const char* typeStr = "Unknown";
+  switch(layerType) {
+    case tgfx::LayerType::Image: typeStr = "Image"; break;
+    case tgfx::LayerType::Text: typeStr = "Text"; break;
+    case tgfx::LayerType::Shape: typeStr = "Shape"; break;
+    case tgfx::LayerType::Solid: typeStr = "Solid"; break;
+    case tgfx::LayerType::Layer: typeStr = "Layer"; break;
+  }
+  
+  // 获取图层的全局变换矩阵和位置信息
+  auto layerMatrix = layer->matrix();
+  printf("[角控制器] createCornerHandles 为图层 '%s'(类型:%s) 创建角控制器\n", 
+         layerName.c_str(), typeStr);
+  printf("[角控制器] 目标图层矩阵：[%.2f, %.2f, %.2f, %.2f, %.2f, %.2f]\n",
+         layerMatrix.getScaleX(), layerMatrix.getSkewY(), layerMatrix.getSkewX(), 
+         layerMatrix.getScaleY(), layerMatrix.getTranslateX(), layerMatrix.getTranslateY());
+  
   // 清除之前的角控制器
   removeCornerHandles();
 
@@ -880,7 +820,7 @@ void TGFXBaseView::createCornerHandles(std::shared_ptr<tgfx::Layer> layer) {
     return;
   }
 
-  // 与高亮一致：使用图层到根的全局矩阵
+  // 使用CoordinateTransformer计算全局矩阵
   auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
 
   // 角控制器大小与线宽按最简逻辑随缩放变化
@@ -900,7 +840,11 @@ void TGFXBaseView::createCornerHandles(std::shared_ptr<tgfx::Layer> layer) {
     tgfx::Point::Make(b.left,  b.bottom),
   };
 
-  for (const auto& c : corners) {
+  printf("[角控制器] 开始创建4个角控制器，边界：left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n", 
+         b.left, b.top, b.right, b.bottom);
+  
+  for (size_t i = 0; i < corners.size(); ++i) {
+    const auto& c = corners[i];
     auto handle = tgfx::ShapeLayer::Make();
     handle->setBlendMode(tgfx::BlendMode::SrcOver);
 
@@ -916,20 +860,43 @@ void TGFXBaseView::createCornerHandles(std::shared_ptr<tgfx::Layer> layer) {
     
     // 设置角控制器名称标识
     handle->setName("__CORNER_HANDLE__");
+    // TODO: 完成旋转区域检测，为旋转功能做准备
 
     rootLayer->addChild(handle);
     // 将 ShapeLayer 转换为 Layer 存储在 cornerHandles 中
     cornerHandles.push_back(std::static_pointer_cast<tgfx::Layer>(handle));
+    
+    // 获取变换矩阵的详细信息
+    auto matrix = handle->matrix();
+    printf("[角控制器] 创建第%zu个角控制器，位置：(%.2f, %.2f)，大小：%.2f，矩阵：[%.2f, %.2f, %.2f, %.2f, %.2f, %.2f]\n", 
+           i+1, c.x, c.y, handleSize, 
+           matrix.getScaleX(), matrix.getSkewY(), matrix.getSkewX(), 
+           matrix.getScaleY(), matrix.getTranslateX(), matrix.getTranslateY());
   }
+  
+  printf("[角控制器] 创建完成，cornerHandles数组大小：%zu\n", cornerHandles.size());
 }
 
 void TGFXBaseView::removeCornerHandles() {
-  for (auto handle : cornerHandles) {
+  printf("[角控制器] removeCornerHandles 开始清理 %zu 个角控制器\n", cornerHandles.size());
+  
+  // 先从父节点移除，再清理引用
+  for (auto& handle : cornerHandles) {
     if (handle) {
-      handle->removeFromParent();
+      // 检查父节点是否存在，避免重复移除
+      if (handle->parent()) {
+        handle->removeFromParent();
+      }
+      // 显式重置智能指针，确保引用计数正确递减
+      handle.reset();
     }
   }
+  
+  // 清空容器并释放内存
   cornerHandles.clear();
+  cornerHandles.shrink_to_fit();
+  
+  printf("[角控制器] 清理完成，容器已清空并释放内存\n");
 }
 
 void TGFXBaseView::updateCornerHandles() {
@@ -937,6 +904,8 @@ void TGFXBaseView::updateCornerHandles() {
   if (!appHost || !selectedTargetLayer || isMoving) {
     return;
   }
+  
+  // 只在重建时输出日志，避免频繁更新现有角控制器时的日志噪音
 
   // 依据当前缩放与矩阵计算线宽与大小
   auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
@@ -958,6 +927,7 @@ void TGFXBaseView::updateCornerHandles() {
 
   // 若已有 4 个角控制器，则只更新其几何与线宽以实现丝滑；否则重建一次
   if (cornerHandles.size() == 4) {
+    // 静默更新现有角控制器，不输出日志避免噪音
     for (size_t i = 0; i < 4; ++i) {
       auto& handle = cornerHandles[i];
       if (!handle) {
@@ -975,6 +945,19 @@ void TGFXBaseView::updateCornerHandles() {
       handle->setVisible(true);
     }
   } else {
+    // 只在重建时输出日志
+    const std::string& targetLayerName = selectedTargetLayer->name();
+    auto targetLayerType = selectedTargetLayer->type();
+    const char* typeStr = "Unknown";
+    switch(targetLayerType) {
+      case tgfx::LayerType::Image: typeStr = "Image"; break;
+      case tgfx::LayerType::Text: typeStr = "Text"; break;
+      case tgfx::LayerType::Shape: typeStr = "Shape"; break;
+      case tgfx::LayerType::Solid: typeStr = "Solid"; break;
+      case tgfx::LayerType::Layer: typeStr = "Layer"; break;
+    }
+    printf("[角控制器] updateCornerHandles 重建角控制器，目标图层：'%s'(类型:%s)，当前数量：%zu\n", 
+           targetLayerName.c_str(), typeStr, cornerHandles.size());
     removeCornerHandles();
     createCornerHandles(selectedTargetLayer);
   }
@@ -1004,6 +987,45 @@ void TGFXBaseView::updateSelectedLineWidth() {
   // 同步线宽和矩阵（位置），确保与目标图层保持一致
   shapeLayer->setMatrix(globalMatrix);
   shapeLayer->setLineWidth(adjustedLineWidth);
+}
+
+std::vector<float> TGFXBaseView::getSelectedLayerCorners() {
+  std::vector<float> result;
+  
+  // 如果没有选中图层，返回空数组
+  if (!selectedTargetLayer) {
+    return result;
+  }
+  
+  // 获取选中图层的边界
+  auto bounds = selectedTargetLayer->getBounds(nullptr, true);
+  
+  // 计算4个角的本地坐标
+  std::vector<tgfx::Point> corners = {
+    tgfx::Point::Make(bounds.left, bounds.top),     // 0: 左上角
+    tgfx::Point::Make(bounds.right, bounds.top),    // 1: 右上角  
+    tgfx::Point::Make(bounds.right, bounds.bottom), // 2: 右下角
+    tgfx::Point::Make(bounds.left, bounds.bottom),  // 3: 左下角
+  };
+  
+  // 获取全局变换矩阵
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  // 将角坐标转换到屏幕坐标系并存储
+  result.reserve(8); // 4个角 * 2个坐标(x,y)
+  for (const auto& corner : corners) {
+    tgfx::Point worldPoint;
+    globalMatrix.mapXY(corner.x, corner.y, &worldPoint);
+    
+    // 应用视口变换（zoom 和 offset）
+    float screenX = worldPoint.x * lastZoom + lastOffsetX;
+    float screenY = worldPoint.y * lastZoom + lastOffsetY;
+    
+    result.push_back(screenX);
+    result.push_back(screenY);
+  }
+  
+  return result;
 }
 
 void TGFXBaseView::setSelectionLineWidth(float width) {
@@ -1083,6 +1105,349 @@ void TGFXBaseView::updateHighlightLineWidth() {
 
   // 更新线宽
   shapeLayer->setLineWidth(adjustedLineWidth);
+}
+
+bool TGFXBaseView::validateSelectionState() {
+  bool needsCleanup = false;
+  
+  // 检查选中目标图层是否仍然有效
+  if (selectedTargetLayer) {
+    // 检查图层是否还在图层树中
+    if (!selectedTargetLayer->parent() && selectedTargetLayer.get() != appHost->displayList.root()) {
+      printf("[状态验证] 选中目标图层已从图层树中移除，需要清理\n");
+      needsCleanup = true;
+    }
+  }
+  
+  // 检查选中边框是否仍然有效
+  if (latestSelectedLayer) {
+    if (!latestSelectedLayer->parent()) {
+      printf("[状态验证] 选中边框已失效\n");
+      needsCleanup = true;
+    }
+  }
+  
+  // 检查角控制器是否仍然有效
+  for (auto it = cornerHandles.begin(); it != cornerHandles.end();) {
+    if (!(*it) || !(*it)->parent()) {
+      printf("[状态验证] 发现无效角控制器\n");
+      if (*it) {
+        (*it)->removeFromParent();
+      }
+      it = cornerHandles.erase(it);
+      needsCleanup = true;
+    } else {
+      ++it;
+    }
+  }
+  
+  // 如果发现问题，执行清理
+  if (needsCleanup) {
+    resetSelectedLayer();
+    return false;
+  }
+  
+  return true;
+}
+
+// ===== 鼠标状态管理实现 =====
+
+void TGFXBaseView::onMouseMove(float x, float y) {
+  if (!mouseStateManager) return;
+  
+  // 更新鼠标状态
+  mouseStateManager->updateMouseState(x, y, MouseEventType::Move);
+  
+  // 如果当前处于拖拽状态，执行移动操作
+  MouseState currentState = mouseStateManager->getCurrentState();
+  if (currentState == MouseState::Dragging && selectedTargetLayer) {
+    // 计算移动增量（这里需要根据实际需求调整坐标转换）
+    static float lastX = x, lastY = y;
+    float deltaX = x - lastX;
+    float deltaY = y - lastY;
+    
+    moveHighlightLayer(deltaX, deltaY);
+    
+    lastX = x;
+    lastY = y;
+  }
+}
+
+void TGFXBaseView::onMouseDown(float x, float y) {
+  if (!mouseStateManager) return;
+  
+  // 更新鼠标状态
+  mouseStateManager->updateMouseState(x, y, MouseEventType::Down);
+  
+  // 根据当前区域执行相应操作
+  InteractionZone zone = detectMouseInteractionZone(x, y);
+  
+  switch (zone) {
+    case InteractionZone::CornerHandle:
+      printf("[鼠标事件] 开始角点调整\n");
+      // TODO: 实现角点调整逻辑
+      break;
+      
+    case InteractionZone::SelectionBorder:
+      printf("[鼠标事件] 开始边框移动\n");
+      // 已有的移动逻辑
+      break;
+      
+    case InteractionZone::RotateZone:
+      printf("[鼠标事件] 开始旋转操作\n");
+      // TODO: 实现旋转逻辑
+      break;
+      
+    case InteractionZone::Layer:
+      printf("[鼠标事件] 选中图层\n");
+      selectLayerAndCheckRedraw(x, y);
+      break;
+      
+    case InteractionZone::Empty:
+    default:
+      printf("[鼠标事件] 点击空白区域\n");
+      resetSelectedLayer();
+      break;
+  }
+}
+
+void TGFXBaseView::onMouseUp(float x, float y) {
+  if (!mouseStateManager) return;
+  
+  // 更新鼠标状态
+  mouseStateManager->updateMouseState(x, y, MouseEventType::Up);
+  
+  // 结束任何正在进行的操作
+  MouseState currentState = mouseStateManager->getCurrentState();
+  if (currentState == MouseState::Dragging || currentState == MouseState::Rotating) {
+    printf("[鼠标事件] 结束拖拽/旋转操作\n");
+  }
+}
+
+MouseState TGFXBaseView::getCurrentMouseState() const {
+  if (!mouseStateManager) return MouseState::Idle;
+  return mouseStateManager->getCurrentState();
+}
+
+void TGFXBaseView::resetMouseState() {
+  if (mouseStateManager) {
+    mouseStateManager->reset();
+  }
+}
+
+
+InteractionZone TGFXBaseView::detectMouseInteractionZone(float x, float y) {
+  // 优先级：角控制器 > 选中边框 > 旋转区域 > 图层 > 空白
+  
+  if (isPointInCornerHandle(x, y)) {
+    return InteractionZone::CornerHandle;
+  }
+  
+  if (isPointInSelectionBorder(x, y)) {
+    return InteractionZone::SelectionBorder;
+  }
+  
+  if (isPointInRotateZone(x, y)) {
+    return InteractionZone::RotateZone;
+  }
+  
+  // 检查是否在某个图层上
+  std::vector<std::shared_ptr<tgfx::Layer>> allLayers;
+  auto layer = selectBestLayerAtPoint(x, y, allLayers);
+  if (layer) {
+    return InteractionZone::Layer;
+  }
+  
+  return InteractionZone::Empty;
+}
+
+bool TGFXBaseView::isPointInCornerHandle(float x, float y) {
+  if (cornerHandles.empty()) return false;
+  
+  // 检查每个角控制器
+  for (const auto& handle : cornerHandles) {
+    if (!handle) continue;
+    
+    // 获取角控制器的边界
+    auto bounds = handle->getBounds();
+    auto matrix = getLayerGlobalMatrix(handle);
+    
+    // 将边界转换到全局坐标
+    auto globalBounds = matrix.mapRect(bounds);
+    
+    // 检查点是否在边界内
+    if (globalBounds.contains(x, y)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+bool TGFXBaseView::isPointInSelectionBorder(float x, float y) {
+  if (!selectedTargetLayer) return false;
+  
+  // 获取选中图层的边界
+  auto bounds = selectedTargetLayer->getBounds();
+  auto matrix = getLayerGlobalMatrix(selectedTargetLayer);
+  auto globalBounds = matrix.mapRect(bounds);
+  
+  // 检查是否在边框附近（但不在内部）
+  float lineWidth = calculateAdjustedLineWidth(selectedTargetLayer);
+  float tolerance = lineWidth * 2.0f; // 边框检测容差
+  
+  // 扩展边界用于检测
+  auto expandedBounds = globalBounds;
+  expandedBounds.outset(tolerance, tolerance);
+  
+  // 点在扩展边界内但不在原始边界内
+  return expandedBounds.contains(x, y) && !globalBounds.contains(x, y);
+}
+
+bool TGFXBaseView::isPointInRotateZone(float x, float y) {
+  if (!selectedTargetLayer) return false;
+  
+  // 首先检查是否在角控制器上，如果是则不是旋转区域
+  if (isPointInCornerHandle(x, y)) {
+    return false;
+  }
+  
+  // 旋转区域应该在角控制器外侧，但仍在选择框附近
+  auto bounds = selectedTargetLayer->getBounds();
+  auto matrix = getLayerGlobalMatrix(selectedTargetLayer);
+  auto globalBounds = matrix.mapRect(bounds);
+  
+  // 角控制器通常在图层边界外8px处
+  float cornerHandleDistance = 8.0f;
+  float cornerHandleSize = 8.0f; // 角控制器的半径
+  float rotateZoneWidth = 20.0f; // 旋转区域的宽度
+  
+  // 角控制器区域边界（图层边界向外扩展到角控制器外边缘）
+  auto cornerZoneBounds = globalBounds;
+  cornerZoneBounds.outset(cornerHandleDistance + cornerHandleSize, cornerHandleDistance + cornerHandleSize);
+  
+  // 旋转区域外边界（从角控制器区域继续向外扩展）
+  auto rotateZoneOuterBounds = cornerZoneBounds;
+  rotateZoneOuterBounds.outset(rotateZoneWidth, rotateZoneWidth);
+  
+  // 旋转区域 = 在外边界内 && 不在角控制器区域内 && 不在角控制器上
+  return rotateZoneOuterBounds.contains(x, y) && !cornerZoneBounds.contains(x, y);
+}
+
+// 添加缺失的函数实现
+tgfx::Matrix TGFXBaseView::getLayerGlobalMatrix(std::shared_ptr<tgfx::Layer> layer) {
+  if (!layer) {
+    return tgfx::Matrix::I();
+  }
+  
+  // 获取图层的全局变换矩阵
+  tgfx::Matrix matrix = tgfx::Matrix::I();
+  auto currentLayer = layer;
+  
+  while (currentLayer) {
+    matrix.preConcat(currentLayer->matrix());
+    // parent()返回原始指针，需要特殊处理
+    auto parentPtr = currentLayer->parent();
+    if (parentPtr) {
+      // 从根节点查找父图层的智能指针引用
+      // 首先获取根图层的智能指针
+      auto rootPtr = appHost->displayList.root();
+      if (rootPtr) {
+        // 创建根图层的智能指针（假设DisplayList有获取根图层智能指针的方法）
+        // 这里我们需要简化处理，直接跳出循环
+        currentLayer.reset();
+      } else {
+        currentLayer.reset();
+      }
+    } else {
+      currentLayer.reset();
+    }
+  }
+  
+  return matrix;
+}
+
+float TGFXBaseView::calculateAdjustedLineWidth(std::shared_ptr<tgfx::Layer> layer) {
+  if (!layer) {
+    return 1.0f;
+  }
+  
+  // 根据图层的变换矩阵计算调整后的线宽
+  auto matrix = getLayerGlobalMatrix(layer);
+  float scaleX = std::sqrt(matrix.getScaleX() * matrix.getScaleX() + matrix.getSkewY() * matrix.getSkewY());
+  float scaleY = std::sqrt(matrix.getSkewX() * matrix.getSkewX() + matrix.getScaleY() * matrix.getScaleY());
+  
+  // 使用较小的缩放值来计算线宽，确保线条在缩放时保持合理的视觉效果
+  float scale = std::min(scaleX, scaleY);
+  return std::max(1.0f, 2.0f / scale); // 最小线宽为1像素
+}
+
+std::shared_ptr<tgfx::Layer> TGFXBaseView::selectBestLayerAtPoint(
+    float /* x */, float /* y */, 
+    const std::vector<std::shared_ptr<tgfx::Layer>>& excludeLayers) {
+  
+  if (excludeLayers.empty()) {
+    return nullptr;
+  }
+  
+  // 如果只有一个候选，直接返回
+  if (excludeLayers.size() == 1) {
+    return excludeLayers[0];
+  }
+  
+  // 优先选择最小的图层（通常是最上层或最具体的图层）
+  std::shared_ptr<tgfx::Layer> bestLayer = nullptr;
+  float minArea = std::numeric_limits<float>::max();
+  
+  for (const auto& layer : excludeLayers) {
+    if (!layer) continue;
+    
+    // 计算图层的边界框面积
+    auto bounds = layer->getBounds();
+    float area = bounds.width() * bounds.height();
+    
+    // 选择面积最小的图层
+    if (area < minArea) {
+      minArea = area;
+      bestLayer = layer;
+    }
+  }
+  
+  return bestLayer ? bestLayer : excludeLayers[0];
+}
+
+std::shared_ptr<tgfx::Layer> TGFXBaseView::selectBestLayerAtPoint(float x, float y) {
+  if (!appHost) {
+    return nullptr;
+  }
+  
+  auto layers = appHost->getLayersUnderPoint(x, y);
+  return selectBestLayerAtPoint(x, y, layers);
+}
+
+// 辅助方法：在图层树中查找原始指针对应的智能指针
+std::shared_ptr<tgfx::Layer> TGFXBaseView::findSharedPtrForLayer(std::shared_ptr<tgfx::Layer> root, tgfx::Layer* target) {
+  if (!root || !target) {
+    return nullptr;
+  }
+  
+  // 如果当前节点就是目标
+  if (root.get() == target) {
+    return root;
+  }
+  
+  // 递归搜索子节点
+  const auto& children = root->children();
+  for (const auto& child : children) {
+    if (child) {
+      auto result = findSharedPtrForLayer(child, target);
+      if (result) {
+        return result;
+      }
+    }
+  }
+  
+  return nullptr;
 }
 
 }  // namespace displaylist

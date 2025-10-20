@@ -22,6 +22,7 @@
 #include "tgfx/gpu/opengl/webgl/WebGLWindow.h"
 #include "tgfx/layers/ShapeLayer.h"
 #include "tgfx/layers/SolidColor.h"
+#include "MouseStateManager.h"
 
 namespace displaylist {
 class TGFXBaseView {
@@ -72,6 +73,13 @@ class TGFXBaseView {
   void createCornerHandles(std::shared_ptr<tgfx::Layer> layer);
   void removeCornerHandles();
   void updateCornerHandles();
+  
+  // 获取选中图层的4个顶点坐标（屏幕坐标系）
+  // 返回数组: [左上角x, 左上角y, 右上角x, 右上角y, 右下角x, 右下角y, 左下角x, 左下角y]
+  std::vector<float> getSelectedLayerCorners();
+  
+  // 旋转区域检测
+  bool isPointInRotateZone(float x, float y);
 
   // 选中边框线宽更新
   void updateSelectedLineWidth();
@@ -84,6 +92,16 @@ class TGFXBaseView {
 
   void markDirty();
   void onWheelEvent();
+
+  // 鼠标状态管理相关方法
+  void onMouseMove(float x, float y);
+  void onMouseDown(float x, float y);
+  void onMouseUp(float x, float y);
+  MouseState getCurrentMouseState() const;
+  void resetMouseState();
+  
+  // 角控制器检测方法（需要暴露给 JavaScript）
+  bool isPointInCornerHandle(float x, float y);
 
  protected:
   std::shared_ptr<hello2d::AppHost> appHost;
@@ -132,5 +150,40 @@ class TGFXBaseView {
   // 静态成员变量：全局高亮线宽配置和角控制器大小比例
   static float s_highlightLineWidth;
   static float s_handleSizeFactor;
+
+  // === 重构后的核心方法 ===
+  
+  // 图层选择核心逻辑（抽取公共代码）
+  std::shared_ptr<tgfx::Layer> selectBestLayerAtPoint(float x, float y, 
+      const std::vector<std::shared_ptr<tgfx::Layer>>& excludeLayers = {});
+  std::shared_ptr<tgfx::Layer> selectBestLayerAtPoint(float x, float y);
+
+  // 选中效果统一管理
+  void createSelectionEffect(std::shared_ptr<tgfx::Layer> layer);
+  void updateSelectionEffect();
+  void removeSelectionEffect();
+
+  // 变换操作统一接口（为未来扩展做准备）
+  bool startTransformOperation(float x, float y);  // TODO: 完成旋转和缩放的检测逻辑
+  void applyTransform(float deltaX, float deltaY);  // TODO: 完成旋转和缩放变换
+  void endTransformOperation();
+
+  // 辅助方法
+  bool isPointInContentBounds(std::shared_ptr<tgfx::Layer> layer, float x, float y);
+  float calculateAdjustedLineWidth(std::shared_ptr<tgfx::Layer> layer);
+  tgfx::Matrix getLayerGlobalMatrix(std::shared_ptr<tgfx::Layer> layer);
+  
+  // 状态管理和内存管理改进
+  bool validateSelectionState();
+
+  // 鼠标状态管理器
+  std::unique_ptr<MouseStateManager> mouseStateManager;
+  
+  // 鼠标状态相关辅助方法
+  InteractionZone detectMouseInteractionZone(float x, float y);
+  bool isPointInSelectionBorder(float x, float y);
+  
+  // 智能指针查找辅助方法
+  std::shared_ptr<tgfx::Layer> findSharedPtrForLayer(std::shared_ptr<tgfx::Layer> root, tgfx::Layer* target);
 };
 }  // namespace displaylist

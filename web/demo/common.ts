@@ -245,6 +245,8 @@ export function initApp() {
             } else {
                 shareData.zoom = val / 100;
             }
+            
+
             shareData.tgfxBaseView?.markDirty();
             animationLoop(shareData);
         }

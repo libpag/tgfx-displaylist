@@ -16,12 +16,16 @@
 //
 /////////////////////////////////////////////////////////////////////////////////////////////////
 #include <emscripten/bind.h>
+#include <emscripten/val.h>
 #include "TGFXThreadsView.h"
 
 using namespace displaylist;
 using namespace emscripten;
 
 EMSCRIPTEN_BINDINGS(TGFXDemo) {
+
+  // 注册 std::vector<float> 类型
+  register_vector<float>("VectorFloat");
 
   class_<TGFXBaseView>("TGFXBaseView")
       .function("setImage", &TGFXBaseView::setImage)
@@ -47,7 +51,18 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("getHandleSizeFactor", &TGFXBaseView::getHandleSizeFactor)
       .function("markDirty", &TGFXBaseView::markDirty)
       .function("onWheelEvent", &TGFXBaseView::onWheelEvent)
-      .function("resetMoveLayers", &TGFXBaseView::resetMoveLayers);
+      .function("resetMoveLayers", &TGFXBaseView::resetMoveLayers)
+      .function("onMouseMove", &TGFXBaseView::onMouseMove)
+      .function("onMouseDown", &TGFXBaseView::onMouseDown)
+      .function("onMouseUp", &TGFXBaseView::onMouseUp)
+      .function("getCurrentMouseState", &TGFXBaseView::getCurrentMouseState)
+      .function("resetMouseState", &TGFXBaseView::resetMouseState)
+      .function("updateCornerHandles", &TGFXBaseView::updateCornerHandles)
+      .function("isPointInCornerHandle", &TGFXBaseView::isPointInCornerHandle)
+      .function("isPointInRotateZone", &TGFXBaseView::isPointInRotateZone)
+      .function("getSelectedLayerCorners", &TGFXBaseView::getSelectedLayerCorners)
+      
+      ;
 
   class_<TGFXThreadsView, base<TGFXBaseView>>("TGFXThreadsView")
       .smart_ptr<std::shared_ptr<TGFXThreadsView>>("TGFXThreadsView")

@@ -1,22 +1,312 @@
-/////////////////////////////////////////////////////////////////////////////////////////////////
-//
-//  Tencent is pleased to support the open source community by making tgfx-displaylist available.
-//
-//  Copyright (C) 2025 Tencent. All rights reserved.
-//
-//  Licensed under the BSD 3-Clause License (the "License"); you may not use this file except
-//  in compliance with the License. You may obtain a copy of the License at
-//
-//      https://opensource.org/licenses/BSD-3-Clause
-//
-//  unless required by applicable law or agreed to in writing, software distributed under the
-//  license is distributed on an "as is" basis, without warranties or conditions of any kind,
-//  either express or implied. see the license for the specific language governing permissions
-//  and limitations under the license.
-//
-/////////////////////////////////////////////////////////////////////////////////////////////////
-
 import {TGFXBaseView, ShareData, shareData, draw, animationLoop} from './common';
+
+// 光标工厂类 - 负责创建和缓存光标
+class CursorFactory {
+    private static instance: CursorFactory;
+    private cursorCache = new Map<string, string>();
+
+    static getInstance(): CursorFactory {
+        if (!CursorFactory.instance) {
+            CursorFactory.instance = new CursorFactory();
+        }
+        return CursorFactory.instance;
+    }
+
+    // 创建方向箭头光标
+    private createArrowCursor(direction: string): string {
+        const svgMap: { [key: string]: string } = {
+            // ↘ 右下方向
+            'se-resize': `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 4L20 20" stroke="black" stroke-width="3"/>
+                <path d="M20 20L14 20L20 14Z" fill="black"/>
+            </svg>`,
+
+            // ↙ 左下方向
+            'sw-resize': `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M20 4L4 20" stroke="black" stroke-width="3"/>
+                <path d="M4 20L10 20L4 14Z" fill="black"/>
+            </svg>`,
+
+            // ↗ 右上方向
+            'ne-resize': `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 20L20 4" stroke="black" stroke-width="3"/>
+                <path d="M20 4L14 4L20 10Z" fill="black"/>
+            </svg>`,
+
+            // ↖ 左上方向
+            'nw-resize': `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M20 20L4 4" stroke="black" stroke-width="3"/>
+                <path d="M4 4L10 4L4 10Z" fill="black"/>
+            </svg>`,
+
+            // 旋转
+            'rotate': `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 3C16.97 3 21 7.03 21 12C21 16.97 16.97 21 12 21C7.03 21 3 16.97 3 12C3 9.5 4 7.26 5.64 5.64" stroke="black" stroke-width="2" fill="none"/>
+                <path d="M9 5L5.64 5.64L6.28 9Z" fill="black"/>
+            </svg>`
+        };
+
+        const svg = svgMap[direction] || svgMap['nw-resize'];
+        const encoded = btoa(svg);
+        return `url('data:image/svg+xml;base64,${encoded}') 12 12, auto`;
+    }
+
+    // 创建弧形旋转光标
+    private createRotateCursor(): string {
+        const canvas = document.createElement('canvas');
+        canvas.width = 24;
+        canvas.height = 24;
+        const ctx = canvas.getContext('2d')!;
+
+        // 设置样式
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+
+        // 绘制上半部分弧形箭头（顺时针）
+        ctx.beginPath();
+        ctx.arc(12, 12, 9, -Math.PI/2, 0, false);
+        ctx.stroke();
+
+        // 绘制上半部分箭头
+        ctx.beginPath();
+        ctx.moveTo(18, 9);
+        ctx.lineTo(21, 12);
+        ctx.lineTo(18, 15);
+        ctx.stroke();
+
+        // 绘制下半部分弧形箭头（逆时针）
+        ctx.beginPath();
+        ctx.arc(12, 12, 9, Math.PI/2, Math.PI, false);
+        ctx.stroke();
+
+        // 绘制下半部分箭头
+        ctx.beginPath();
+        ctx.moveTo(6, 15);
+        ctx.lineTo(3, 12);
+        ctx.lineTo(6, 9);
+        ctx.stroke();
+
+        const dataUrl = canvas.toDataURL('image/png');
+        return `url('${dataUrl}') 12 12, auto`;
+    }
+
+    // 获取光标（带缓存）
+    getCursor(type: string): string {
+        if (this.cursorCache.has(type)) {
+            return this.cursorCache.get(type)!;
+        }
+
+        let cursor: string;
+        if (type === 'rotate') {
+            cursor = this.createRotateCursor();
+        } else if (['nw-resize', 'ne-resize', 'sw-resize', 'se-resize'].includes(type)) {
+            cursor = this.createArrowCursor(type);
+        } else {
+            cursor = type; // 使用系统默认光标
+        }
+
+        this.cursorCache.set(type, cursor);
+        return cursor;
+    }
+
+    // 清理缓存
+    clearCache(): void {
+        this.cursorCache.clear();
+    }
+}
+
+// 坐标转换器类 - 统一处理坐标转换逻辑
+class CoordinateTransformer {
+    static screenToWorld(screenX: number, screenY: number, shareData: ShareData): {worldX: number, worldY: number} {
+        // 优先尝试使用 C++ 端的坐标转换
+        if (shareData.tgfxBaseView && typeof (shareData.tgfxBaseView as any).screenToWorld === 'function') {
+            try {
+                const result = (shareData.tgfxBaseView as any).screenToWorld(screenX, screenY);
+                if (result && typeof result.x === 'number' && typeof result.y === 'number') {
+                    return { worldX: result.x, worldY: result.y };
+                }
+            } catch (error) {
+                // C++ 转换失败，降级到 JavaScript 实现
+            }
+        }
+
+        // JavaScript 降级实现
+        const worldX = (screenX - shareData.offsetX) / shareData.zoom;
+        const worldY = (screenY - shareData.offsetY) / shareData.zoom;
+        return { worldX, worldY };
+    }
+
+    static screenDeltaToWorldDelta(deltaX: number, deltaY: number, shareData: ShareData): {worldDeltaX: number, worldDeltaY: number} {
+        const worldDeltaX = deltaX / shareData.zoom;
+        const worldDeltaY = deltaY / shareData.zoom;
+        return { worldDeltaX, worldDeltaY };
+    }
+}
+
+// 光标检测缓存类 - 提升性能
+class CursorDetectionCache {
+    private lastMouseX = 0;
+    private lastMouseY = 0;
+    private lastCursorType = 'default';
+    private lastUpdateTime = 0;
+    private readonly CACHE_THRESHOLD = 2; // 像素阈值
+    private readonly TIME_THRESHOLD = 16; // 时间阈值（约60fps）
+
+    detectCursorType(mouseX: number, mouseY: number, shareData: ShareData): string {
+        const now = Date.now();
+        
+        // 检查是否需要更新（位置变化小于阈值且时间间隔小）
+        const deltaX = Math.abs(mouseX - this.lastMouseX);
+        const deltaY = Math.abs(mouseY - this.lastMouseY);
+        const timeDelta = now - this.lastUpdateTime;
+        
+        if (deltaX < this.CACHE_THRESHOLD && deltaY < this.CACHE_THRESHOLD && timeDelta < this.TIME_THRESHOLD) {
+            return this.lastCursorType;
+        }
+
+        // 执行实际检测
+        const cursorType = this.performDetection(mouseX, mouseY, shareData);
+        
+        // 更新缓存
+        this.lastMouseX = mouseX;
+        this.lastMouseY = mouseY;
+        this.lastCursorType = cursorType;
+        this.lastUpdateTime = now;
+        
+        return cursorType;
+    }
+
+    private performDetection(mouseX: number, mouseY: number, shareData: ShareData): string {
+        if (!shareData.tgfxBaseView) return 'default';
+
+        try {
+            // 使用优化的坐标转换器
+            const worldCoords = CoordinateTransformer.screenToWorld(mouseX, mouseY, shareData);
+
+            // 使用精确的距离计算来判断角控制器
+            const cornerDetectionResult = this.detectCornerPosition(mouseX, mouseY, shareData);
+
+            if (cornerDetectionResult && typeof cornerDetectionResult === 'object') {
+                const { position, distance } = cornerDetectionResult;
+
+                // 只有距离小于 8 像素时才认为是在角控制器上
+                if (distance < 8) {
+                    // 返回对应的箭头光标类型
+                    switch (position) {
+                        case '左上角':
+                            return 'nw-resize';
+                        case '右上角':
+                            return 'ne-resize';
+                        case '左下角':
+                            return 'sw-resize';
+                        case '右下角':
+                            return 'se-resize';
+                        default:
+                            return 'nw-resize';
+                    }
+                } else if (distance < 40) {
+                    // 在角控制器附近但不在上面，显示旋转光标
+                    return 'rotate';
+                }
+            }
+
+            // 检查旋转区域
+            const isInRotateZone = (shareData.tgfxBaseView as any).isPointInRotateZone &&
+                (shareData.tgfxBaseView as any).isPointInRotateZone(worldCoords.worldX, worldCoords.worldY);
+
+            if (isInRotateZone) {
+                return 'rotate';
+            }
+
+            return 'default';
+        } catch (error) {
+            return 'default';
+        }
+    }
+
+    // 检测具体是哪个角控制器
+    private detectCornerPosition(mouseX: number, mouseY: number, shareData: ShareData): { position: string; distance: number } | null {
+        if (!shareData.tgfxBaseView) return null;
+
+        try {
+            // 使用优化的坐标转换器
+            const worldCoords = CoordinateTransformer.screenToWorld(mouseX, mouseY, shareData);
+
+            // 首先确认鼠标确实在角控制器区域附近
+            if (!(shareData.tgfxBaseView as any).isPointInCornerHandle(worldCoords.worldX, worldCoords.worldY)) {
+                return null;
+            }
+
+            // 检查函数是否存在
+            if (typeof (shareData.tgfxBaseView as any).getSelectedLayerCorners !== 'function') {
+                return null;
+            }
+
+            // 使用新的C++函数获取选中图层的4个顶点坐标
+            const cornersVector = (shareData.tgfxBaseView as any).getSelectedLayerCorners();
+
+            // 将 Emscripten vector 转换为 JavaScript 数组
+            let corners: number[] = [];
+            if (cornersVector && typeof cornersVector.size === 'function') {
+                const size = cornersVector.size();
+                for (let i = 0; i < size; i++) {
+                    corners.push(cornersVector.get(i));
+                }
+            }
+
+            if (!corners || corners.length !== 8) {
+                return null;
+            }
+
+            // 解析坐标数组: [左上角x, 左上角y, 右上角x, 右上角y, 右下角x, 右下角y, 左下角x, 左下角y]
+            const cornerData = [
+                { name: '左上角', x: corners[0], y: corners[1] }, // 0
+                { name: '右上角', x: corners[2], y: corners[3] }, // 1
+                { name: '右下角', x: corners[4], y: corners[5] }, // 2
+                { name: '左下角', x: corners[6], y: corners[7] }, // 3
+            ];
+
+            // 验证坐标数据的有效性
+            const hasValidCoords = cornerData.every(corner =>
+                typeof corner.x === 'number' && typeof corner.y === 'number' &&
+                !isNaN(corner.x) && !isNaN(corner.y)
+            );
+
+            if (!hasValidCoords) {
+                return null;
+            }
+
+            // 计算鼠标到每个角的距离
+            const distances = cornerData.map(corner => {
+                const dx = mouseX - corner.x;
+                const dy = mouseY - corner.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                return { corner: corner.name, distance };
+            });
+
+            // 选择距离最近的角
+            const nearest = distances.reduce((min, current) =>
+                current.distance < min.distance ? current : min
+            );
+
+            return { position: nearest.corner, distance: nearest.distance };
+
+        } catch (error) {
+            return null; // 出错时返回 null
+        }
+    }
+}
+
+// 全局实例
+const cursorFactory = CursorFactory.getInstance();
+const cursorDetectionCache = new CursorDetectionCache();
+
+// 设置光标样式（使用工厂模式）
+function setCursor(canvas: HTMLElement, cursorType: string) {
+    const cursor = cursorFactory.getCursor(cursorType);
+    canvas.style.cursor = cursor;
+}
 
 const MIN_ZOOM = 0.01;
 const MAX_ZOOM = 1000.0;
@@ -43,48 +333,6 @@ let hasMoved = false;
 let lastPointX = 0;
 let lastPointY = 0;
 
-function ThrottleWithTrailing(delay: number) {
-    return function (
-        target: Object,
-        propertyKey: string | symbol,
-        descriptor: PropertyDescriptor
-    ): PropertyDescriptor {
-        const originalMethod = descriptor.value;
-
-        let lastExecutionTime = 0;
-        let timeoutId: ReturnType<typeof setTimeout> | null = null;
-        let lastArgs: any[] | null = null;
-        let lastThis: any = null;
-
-        const invoke = () => {
-            lastExecutionTime = Date.now();
-            timeoutId = null;
-            originalMethod.apply(lastThis, lastArgs);
-            lastArgs = null;
-            lastThis = null;
-        };
-
-        descriptor.value = function (...args: any[]) {
-            const now = Date.now();
-
-            if (now - lastExecutionTime >= delay) {
-                lastExecutionTime = now;
-                originalMethod.apply(this, args);
-            } else {
-                lastArgs = args;
-                lastThis = this;
-
-                if (!timeoutId) {
-                    const remainingTime = delay - (now - lastExecutionTime);
-                    timeoutId = setTimeout(invoke, remainingTime);
-                }
-            }
-        };
-
-        return descriptor;
-    };
-}
-
 function ConvertCoordinates(e: MouseEvent, canvas: HTMLElement) {
     const rect = canvas.getBoundingClientRect();
     return {
@@ -93,19 +341,7 @@ function ConvertCoordinates(e: MouseEvent, canvas: HTMLElement) {
     };
 }
 
-// 屏幕坐标转换为世界坐标（考虑缩放和偏移）
-function screenToWorld(screenX: number, screenY: number, shareData: ShareData) {
-    const worldX = (screenX - shareData.offsetX) / shareData.zoom;
-    const worldY = (screenY - shareData.offsetY) / shareData.zoom;
-    return {worldX, worldY};
-}
 
-// 屏幕增量转换为世界增量（考虑缩放和偏移）
-function screenDeltaToWorldDelta(deltaX: number, deltaY: number, shareData: ShareData) {
-    const worldDeltaX = deltaX / shareData.zoom;
-    const worldDeltaY = deltaY / shareData.zoom;
-    return {worldDeltaX, worldDeltaY};
-}
 
 export type ZoomChangeCallback = (zoom: number) => void;
 
@@ -279,12 +515,16 @@ export class GestureManager {
 
         // 鼠标悬停高亮
         const clientXY = ConvertCoordinates(event, canvas);
-        const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+        const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
         const reDraw = shareData.tgfxBaseView?.highlightLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
         if (reDraw) {
             shareData.tgfxBaseView?.markDirty();
             animationLoop(shareData);
         }
+
+        // 光标检测和设置（使用缓存）
+        const cursorType = cursorDetectionCache.detectCursorType(clientXY.clientX, clientXY.clientY, shareData);
+        setCursor(canvas, cursorType);
     }
 
     public onMouseLeave(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
@@ -294,7 +534,7 @@ export class GestureManager {
     public onMouseDown(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
         if (event.button === 0) { // 判断是否为左键
             const clientXY = ConvertCoordinates(event, canvas);
-            const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+            const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
 
             shareData.tgfxBaseView?.resetHighlightLayer();
             if (shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY)) {
@@ -302,8 +542,6 @@ export class GestureManager {
                 lastPointY = clientXY.clientY;
                 isMouseDown = true;
                 hasMoved = false;
-
-
             }
             shareData.tgfxBaseView?.markDirty();
             animationLoop(shareData);
@@ -313,11 +551,11 @@ export class GestureManager {
     public onMouseUp(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
         if (event.button === 0) { // 判断是否为左键
             if (!hasMoved) {
-                // 点击但没有移动，执行选中操作
+                // 单击事件：调用选中方法
                 const clientXY = ConvertCoordinates(event, canvas);
-                const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
-                
-                shareData.tgfxBaseView?.selectLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
+                const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+
+                const selected = (shareData.tgfxBaseView as any)?.selectLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
             } else {
                 shareData.tgfxBaseView.resetMoveLayers();
             }
@@ -325,7 +563,7 @@ export class GestureManager {
             // 重置状态
             isMouseDown = false;
             hasMoved = false;
-            
+
             shareData.tgfxBaseView?.markDirty();
             animationLoop(shareData);
         }
@@ -333,7 +571,7 @@ export class GestureManager {
 
     public onClick(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
         const clientXY = ConvertCoordinates(event, canvas);
-        const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+        const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
 
         shareData.tgfxBaseView?.resetHighlightLayer();
         shareData.tgfxBaseView?.markDirty();
