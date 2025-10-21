@@ -102,6 +102,10 @@ class TGFXBaseView {
   
   // 角控制器检测方法（需要暴露给 JavaScript）
   bool isPointInCornerHandle(float x, float y);
+  
+  // 选中图层检测方法（需要暴露给 JavaScript）
+  bool isPointInSelectedLayer(float x, float y);
+  bool isPointInSelectionBorder(float x, float y);
 
  protected:
   std::shared_ptr<hello2d::AppHost> appHost;
@@ -181,9 +185,11 @@ class TGFXBaseView {
   
   // 鼠标状态相关辅助方法
   InteractionZone detectMouseInteractionZone(float x, float y);
-  bool isPointInSelectionBorder(float x, float y);
   
   // 智能指针查找辅助方法
   std::shared_ptr<tgfx::Layer> findSharedPtrForLayer(std::shared_ptr<tgfx::Layer> root, tgfx::Layer* target);
+  
+  // 控制图层边框检测辅助方法
+  bool isPointOnControlLayerBorder(float x, float y, std::shared_ptr<tgfx::Layer> controlLayer);
 };
 }  // namespace displaylist

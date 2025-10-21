@@ -60,6 +60,8 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("updateCornerHandles", &TGFXBaseView::updateCornerHandles)
       .function("isPointInCornerHandle", &TGFXBaseView::isPointInCornerHandle)
       .function("isPointInRotateZone", &TGFXBaseView::isPointInRotateZone)
+      .function("isPointInSelectedLayer", &TGFXBaseView::isPointInSelectedLayer)
+      .function("isPointInSelectionBorder", &TGFXBaseView::isPointInSelectionBorder)
       .function("getSelectedLayerCorners", &TGFXBaseView::getSelectedLayerCorners)
       
       ;

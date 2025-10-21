@@ -640,15 +640,33 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
 
   auto layers = appHost->getLayersUnderPoint(x, y);
   
-  // 前置判断：如果点击的是控制图层，直接返回，不改变选中状态
+  printf("[DEBUG] selectLayerAndCheckRedraw: 检测到 %zu 个图层\n", layers.size());
+  
+  // 前置判断：如果点击的是控制图层，需要区分边框和内部
   if (!layers.empty()) {
     const std::string& layerName = layers[0]->name();
+    printf("[DEBUG] selectLayerAndCheckRedraw: 第一个图层名称: '%s'\n", layerName.c_str());
+    
     if (layerName == "__CORNER_HANDLE__" || layerName == "__SELECTION_BORDER__") {
-      return false;
+      printf("[DEBUG] selectLayerAndCheckRedraw: 检测到控制图层: %s\n", layerName.c_str());
+      
+      // 对于角控制器，直接返回，不进行穿透（角控制器本身就是操作区域）
+      if (layerName == "__CORNER_HANDLE__") {
+        printf("[DEBUG] selectLayerAndCheckRedraw: 点击角控制器，停止检测\n");
+        return false;
+      }
+      
+      // 对于选择边框，直接穿透到下层图层
+      if (layerName == "__SELECTION_BORDER__") {
+        printf("[DEBUG] selectLayerAndCheckRedraw: 检测到选择边框，穿透检测下层图层\n");
+        // 移除选择边框，继续检测下层图层
+        layers.erase(layers.begin());
+        printf("[DEBUG] selectLayerAndCheckRedraw: 移除选择边框后剩余 %zu 个图层\n", layers.size());
+      }
     }
   }
 
-  // 按层级顺序选择图层（最上面优先），与高亮检测逻辑保持一致
+  // 按层级顺序选择图层，支持穿透选择（与高亮逻辑保持一致）
   std::shared_ptr<tgfx::Layer> bestLayer = nullptr;
   for (auto layer : layers) {
     // 跳过控制图层
@@ -657,17 +675,31 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
       continue;
     }
     
-    // 选择第一个（最顶层的）非控制图层
+    // 如果这个图层与当前选中的图层相同，尝试选择下一个图层（穿透效果）
+    if (layer == selectedTargetLayer) {
+      continue;
+    }
+    
+    // 选择第一个（最顶层的）非控制图层且非当前选中的图层
     bestLayer = layer;
     break;
   }
   
-  if (bestLayer) {
-    // 如果点击的是已经选中的图层，保持选中状态
-    if (bestLayer == selectedTargetLayer) {
-      appHost->markDirty();
-      return true;
+  // 如果没有找到其他图层，且点击位置有已选中的图层，则保持当前选中状态
+  if (!bestLayer && !layers.empty()) {
+    for (auto layer : layers) {
+      const std::string& layerName = layer->name();
+      if (layerName == "__CORNER_HANDLE__" || layerName == "__SELECTION_BORDER__") {
+        continue;
+      }
+      if (layer == selectedTargetLayer) {
+        appHost->markDirty();
+        return true;
+      }
     }
+  }
+  
+  if (bestLayer) {
 
     // 先清理旧的选择框
     resetSelectedLayer();
@@ -1284,6 +1316,26 @@ bool TGFXBaseView::isPointInCornerHandle(float x, float y) {
   return false;
 }
 
+bool TGFXBaseView::isPointInSelectedLayer(float x, float y) {
+  if (!selectedTargetLayer) return false;
+  
+  // 获取选中图层的边界
+  auto bounds = selectedTargetLayer->getBounds();
+  auto matrix = getLayerGlobalMatrix(selectedTargetLayer);
+  auto globalBounds = matrix.mapRect(bounds);
+  
+  printf("[DEBUG] isPointInSelectedLayer: 点坐标 (%.2f, %.2f)\n", x, y);
+  printf("[DEBUG] isPointInSelectedLayer: 图层边界 left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n", 
+         bounds.left, bounds.top, bounds.right, bounds.bottom);
+  printf("[DEBUG] isPointInSelectedLayer: 全局边界 left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n", 
+         globalBounds.left, globalBounds.top, globalBounds.right, globalBounds.bottom);
+  
+  // 检查点是否在选中图层内部
+  bool result = globalBounds.contains(x, y);
+  printf("[DEBUG] isPointInSelectedLayer: 结果 %s\n", result ? "在内部" : "不在内部");
+  return result;
+}
+
 bool TGFXBaseView::isPointInSelectionBorder(float x, float y) {
   if (!selectedTargetLayer) return false;
   
@@ -1448,6 +1500,45 @@ std::shared_ptr<tgfx::Layer> TGFXBaseView::findSharedPtrForLayer(std::shared_ptr
   }
   
   return nullptr;
+}
+
+// 检测点是否在控制图层的边框上
+bool TGFXBaseView::isPointOnControlLayerBorder(float x, float y, std::shared_ptr<tgfx::Layer> controlLayer) {
+  if (!controlLayer) {
+    printf("[DEBUG] isPointOnControlLayerBorder: 控制图层为空\n");
+    return false;
+  }
+  
+  const std::string& layerName = controlLayer->name();
+  printf("[DEBUG] isPointOnControlLayerBorder: 检测控制图层 '%s' 在点 (%.2f, %.2f)\n", layerName.c_str(), x, y);
+  
+  // 对于角控制器，整个区域都算边框（因为角控制器本身就是用来操作的）
+  if (layerName == "__CORNER_HANDLE__") {
+    printf("[DEBUG] isPointOnControlLayerBorder: 角控制器，返回 true\n");
+    return true;
+  }
+  
+  // 对于选择边框，使用简化的检测逻辑
+  // 参考旋转功能的实现：如果有选中图层，检查是否在选中图层内部
+  if (layerName == "__SELECTION_BORDER__") {
+    printf("[DEBUG] isPointOnControlLayerBorder: 选择边框检测\n");
+    // 如果有选中的图层，检查点是否在选中图层内部
+    if (selectedTargetLayer) {
+      // 使用现有的 isPointInSelectedLayer 方法检测
+      bool isInSelectedLayer = isPointInSelectedLayer(x, y);
+      printf("[DEBUG] isPointOnControlLayerBorder: 点在选中图层内部: %s\n", isInSelectedLayer ? "是" : "否");
+      // 如果在选中图层内部，说明不在边框上（类似旋转功能的逻辑）
+      bool result = !isInSelectedLayer;
+      printf("[DEBUG] isPointOnControlLayerBorder: 选择边框结果: %s\n", result ? "在边框上" : "在内部");
+      return result;
+    }
+    // 如果没有选中图层，默认认为在边框上
+    printf("[DEBUG] isPointOnControlLayerBorder: 没有选中图层，默认在边框上\n");
+    return true;
+  }
+  
+  printf("[DEBUG] isPointOnControlLayerBorder: 未知控制图层类型，返回 false\n");
+  return false;
 }
 
 }  // namespace displaylist

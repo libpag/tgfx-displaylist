@@ -59,13 +59,17 @@ export class TGFXBaseView {
     public moveHighlightLayer: (deltaX: number, deltaY: number) => void;
     public getMoveLayerPosition: () => number[];
     public getMoveLayerGlobalMatrix: () => number[];
+    public selectLayerAndCheckRedraw: (x: number, y: number) => boolean;
+    public resetSelectedLayer: () => boolean;
+    public isPointInSelectedLayer: (x: number, y: number) => boolean;
+    public isPointInSelectionBorder: (x: number, y: number) => boolean;
     public markDirty: () => void;
     public resetMoveLayers: () => void;
 }
 
 export class ShareData {
-    public DisplaylistModule: types.TGFX = null;
-    public tgfxBaseView: TGFXBaseView = null;
+    public DisplaylistModule: types.TGFX | null = null;
+    public tgfxBaseView: TGFXBaseView | null = null;
     public drawIndex: number = 0;
     public zoom: number = 1.0;
     public offsetX: number = 0;

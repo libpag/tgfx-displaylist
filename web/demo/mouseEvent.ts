@@ -144,37 +144,21 @@ class CoordinateTransformer {
     }
 }
 
-// 光标检测缓存类 - 提升性能
+// 简化的光标检测缓存类
 class CursorDetectionCache {
-    private lastMouseX = 0;
-    private lastMouseY = 0;
+    private lastFrameId = 0;
     private lastCursorType = 'default';
-    private lastUpdateTime = 0;
-    private readonly CACHE_THRESHOLD = 2; // 像素阈值
-    private readonly TIME_THRESHOLD = 16; // 时间阈值（约60fps）
 
     detectCursorType(mouseX: number, mouseY: number, shareData: ShareData): string {
-        const now = Date.now();
+        const currentFrameId = performance.now() >> 4; // 约60fps的帧ID
         
-        // 检查是否需要更新（位置变化小于阈值且时间间隔小）
-        const deltaX = Math.abs(mouseX - this.lastMouseX);
-        const deltaY = Math.abs(mouseY - this.lastMouseY);
-        const timeDelta = now - this.lastUpdateTime;
-        
-        if (deltaX < this.CACHE_THRESHOLD && deltaY < this.CACHE_THRESHOLD && timeDelta < this.TIME_THRESHOLD) {
-            return this.lastCursorType;
+        // 只在新帧时重新检测
+        if (currentFrameId !== this.lastFrameId) {
+            this.lastCursorType = this.performDetection(mouseX, mouseY, shareData);
+            this.lastFrameId = currentFrameId;
         }
-
-        // 执行实际检测
-        const cursorType = this.performDetection(mouseX, mouseY, shareData);
         
-        // 更新缓存
-        this.lastMouseX = mouseX;
-        this.lastMouseY = mouseY;
-        this.lastCursorType = cursorType;
-        this.lastUpdateTime = now;
-        
-        return cursorType;
+        return this.lastCursorType;
     }
 
     private performDetection(mouseX: number, mouseY: number, shareData: ShareData): string {
@@ -184,13 +168,13 @@ class CursorDetectionCache {
             // 使用优化的坐标转换器
             const worldCoords = CoordinateTransformer.screenToWorld(mouseX, mouseY, shareData);
 
-            // 使用精确的距离计算来判断角控制器
+            // 1. 首先检查角控制器（最高优先级）
             const cornerDetectionResult = this.detectCornerPosition(mouseX, mouseY, shareData);
 
             if (cornerDetectionResult && typeof cornerDetectionResult === 'object') {
                 const { position, distance } = cornerDetectionResult;
 
-                // 只有距离小于 8 像素时才认为是在角控制器上
+                // 只要在角控制器检测范围内（距离 < 8 像素），就显示缩放光标
                 if (distance < 8) {
                     // 返回对应的箭头光标类型
                     switch (position) {
@@ -205,23 +189,65 @@ class CursorDetectionCache {
                         default:
                             return 'nw-resize';
                     }
-                } else if (distance < 40) {
+                }
+            }
+
+            // 2. 检查是否在选择边框上（显示移动光标）
+            // 注意：这里不需要排除角控制器，因为角控制器已经在上面处理了
+            const isOnSelectionBorder = (shareData.tgfxBaseView as any).isPointInSelectionBorder &&
+                (shareData.tgfxBaseView as any).isPointInSelectionBorder(worldCoords.worldX, worldCoords.worldY);
+
+            if (isOnSelectionBorder) {
+                return 'move';
+            }
+
+            // 3. 检查角控制器附近的旋转区域（距离 8-40 像素）
+            if (cornerDetectionResult && typeof cornerDetectionResult === 'object') {
+                const { distance } = cornerDetectionResult;
+                if (distance >= 8 && distance < 40) {
                     // 在角控制器附近但不在上面，显示旋转光标
                     return 'rotate';
                 }
             }
 
-            // 检查旋转区域
-            const isInRotateZone = (shareData.tgfxBaseView as any).isPointInRotateZone &&
+            // 检查是否在选中图层内部（如果有选中的图层）
+            const isInSelectedLayer = this.isPointInSelectedLayer(worldCoords.worldX, worldCoords.worldY, shareData);
+
+            // 检查旋转区域（但排除图层内部）
+            const isInRotateZone = !isInSelectedLayer && 
+                (shareData.tgfxBaseView as any).isPointInRotateZone &&
                 (shareData.tgfxBaseView as any).isPointInRotateZone(worldCoords.worldX, worldCoords.worldY);
 
             if (isInRotateZone) {
                 return 'rotate';
             }
 
+            // 如果在选中图层内部，显示指针光标
+            if (isInSelectedLayer) {
+                return 'pointer';
+            }
+
             return 'default';
         } catch (error) {
             return 'default';
+        }
+    }
+
+    /**
+     * 检查点是否在选中图层内部
+     */
+    private isPointInSelectedLayer(worldX: number, worldY: number, shareData: ShareData): boolean {
+        if (!shareData.tgfxBaseView) return false;
+
+        try {
+            // 调用 C++ 方法检查点是否在选中图层内部
+            const isInLayer = (shareData.tgfxBaseView as any).isPointInSelectedLayer &&
+                (shareData.tgfxBaseView as any).isPointInSelectedLayer(worldX, worldY);
+            
+            return !!isInLayer;
+        } catch (error) {
+            console.error('检查选中图层失败:', error);
+            return false;
         }
     }
 
@@ -497,7 +523,9 @@ export class GestureManager {
             if (screenDeltaX !== 0 || screenDeltaY !== 0) {
                 // 直接使用屏幕增量，让后端处理坐标变换
                 try {
-                    shareData.tgfxBaseView?.moveHighlightLayer(screenDeltaX, screenDeltaY);
+                    if (shareData.tgfxBaseView) {
+            shareData.tgfxBaseView.moveHighlightLayer(screenDeltaX, screenDeltaY);
+        }
                 } catch (error) {
                     console.error('移动图层时出错:', error);
                 }
@@ -555,7 +583,9 @@ export class GestureManager {
                 const clientXY = ConvertCoordinates(event, canvas);
                 const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
 
-                const selected = (shareData.tgfxBaseView as any)?.selectLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
+                console.log(`[JS调试] 单击坐标：(${worldCoords.worldX}, ${worldCoords.worldY})`);
+                const selected = shareData.tgfxBaseView?.selectLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
+                console.log(`[JS调试] 选中结果：${selected}`);
             } else {
                 shareData.tgfxBaseView.resetMoveLayers();
             }
