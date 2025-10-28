@@ -19,14 +19,12 @@ tgfx::Point CoordinateTransformer::screenDeltaToLayerDelta(float screenDeltaX, f
   float viewDeltaX = screenDeltaX / zoom;
   float viewDeltaY = screenDeltaY / zoom;
 
-  // 视图坐标 → 图层本地坐标
-  auto viewPoint1 = tgfx::Point::Make(0, 0);
-  auto viewPoint2 = tgfx::Point::Make(viewDeltaX, viewDeltaY);
+  // 视图增量 → 图层本地
+  auto viewDelta = tgfx::Point::Make(viewDeltaX, viewDeltaY);
+  const tgfx::Point originLocal = layer->globalToLocal(tgfx::Point::Make(0, 0));
+  const tgfx::Point offsetLocal = layer->globalToLocal(viewDelta);
 
-  auto localPoint1 = layer->globalToLocal(viewPoint1);
-  auto localPoint2 = layer->globalToLocal(viewPoint2);
-
-  return tgfx::Point::Make(localPoint2.x - localPoint1.x, localPoint2.y - localPoint1.y);
+  return tgfx::Point::Make(offsetLocal.x - originLocal.x, offsetLocal.y - originLocal.y);
 }
 
 tgfx::Point CoordinateTransformer::screenToLayerLocal(float screenX, float screenY, float zoom,

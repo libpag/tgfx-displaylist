@@ -376,9 +376,12 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
 
     // 计算缩放比例，调整线宽以保持视觉一致性
     // 同时考虑全局缩放(lastZoom)和图层变换矩阵
-    float scaleX = globalMatrix.getScaleX();
-    float scaleY = globalMatrix.getScaleY();
-    float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
+    // 正确提取缩放值，不受旋转影响
+    float scaleX = std::sqrt(globalMatrix.getScaleX() * globalMatrix.getScaleX() + 
+                             globalMatrix.getSkewY() * globalMatrix.getSkewY());
+    float scaleY = std::sqrt(globalMatrix.getSkewX() * globalMatrix.getSkewX() + 
+                             globalMatrix.getScaleY() * globalMatrix.getScaleY());
+    float layerAvgScale = (scaleX + scaleY) / 2.0f;
 
     // 结合全局缩放和图层缩放计算最终的缩放比例
     float totalScale = layerAvgScale * lastZoom;
@@ -628,6 +631,110 @@ std::vector<float> TGFXBaseView::getMoveLayerGlobalMatrix() {
   return matrixInfo;
 }
 
+void TGFXBaseView::rotateSelectedLayer(float angle, float worldCenterX, float worldCenterY) {
+  if (!selectedTargetLayer) {
+    return;
+  }
+
+  static int rotationCount = 0;
+  rotationCount++;
+
+  const float angleDegrees = angle * 180.0f / static_cast<float>(M_PI);
+  printf("[旋转C++] 第%d次旋转 - 图层:'%s', 增量角度:%.4f°, 请求中心:(%.2f, %.2f)\n",
+         rotationCount, selectedTargetLayer->name().c_str(), angleDegrees, worldCenterX, worldCenterY);
+
+  // 获取本地几何中心
+  const auto localBounds = selectedTargetLayer->getBounds(nullptr, true);
+  const tgfx::Point pivotLocal =
+      tgfx::Point::Make((localBounds.left + localBounds.right) * 0.5f, 
+                        (localBounds.top + localBounds.bottom) * 0.5f);
+  
+  printf("[旋转C++] 本地边界: left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n",
+         localBounds.left, localBounds.top, localBounds.right, localBounds.bottom);
+  printf("[旋转C++] 本地枢轴: (%.2f, %.2f)\n", pivotLocal.x, pivotLocal.y);
+
+  // 记录旋转前的世界坐标（用于验证）
+  auto root = selectedTargetLayer->root();
+  auto worldBoundsBefore = selectedTargetLayer->getBounds(root, true);
+  printf("[旋转C++] 旋转前世界边界中心: (%.2f, %.2f)\n", 
+         worldBoundsBefore.centerX(), worldBoundsBefore.centerY());
+
+  // 直接在本地坐标系旋转，使用Matrix的preRotate(degrees, px, py)
+  tgfx::Matrix newMatrix = selectedTargetLayer->matrix();
+  newMatrix.preRotate(angleDegrees, pivotLocal.x, pivotLocal.y);
+  selectedTargetLayer->setMatrix(newMatrix);
+
+  // 验证旋转后的世界坐标
+  auto worldBoundsAfter = selectedTargetLayer->getBounds(root, true);
+  printf("[旋转C++] 旋转后世界边界中心: (%.2f, %.2f)\n", 
+         worldBoundsAfter.centerX(), worldBoundsAfter.centerY());
+
+  updateCornerHandles();
+  updateSelectedLineWidth();
+  appHost->markDirty();
+}
+
+std::vector<float> TGFXBaseView::getSelectedLayerCenter() {
+  printf("[旋转C++] getSelectedLayerCenter 被调用\n");
+  std::vector<float> center = {0.0f, 0.0f};
+  
+  if (!selectedTargetLayer) {
+    printf("[旋转C++] 错误：没有选中的图层\n");
+    return center;
+  }
+  
+  // 获取图层在本地坐标系的边界
+  auto localBounds = selectedTargetLayer->getBounds(nullptr, true);
+  printf("[旋转C++] 本地边界：left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n",
+         localBounds.left, localBounds.top, localBounds.right, localBounds.bottom);
+  
+  // 获取图层在世界坐标系（root）的边界
+  auto root = selectedTargetLayer->root();
+  auto worldBounds = selectedTargetLayer->getBounds(root, true);
+  printf("[旋转C++] 世界边界：left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n",
+         worldBounds.left, worldBounds.top, worldBounds.right, worldBounds.bottom);
+  
+  // 直接用世界边界计算中心点
+  center[0] = worldBounds.centerX();
+  center[1] = worldBounds.centerY();
+  
+  printf("[旋转C++] 选中图层 '%s' 的世界坐标中心点：(%.2f, %.2f)\n", 
+         selectedTargetLayer->name().c_str(), center[0], center[1]);
+  
+  return center;
+}
+
+std::vector<std::string> TGFXBaseView::getSelectedLayerInfo() {
+  std::vector<std::string> info;
+  
+  if (!selectedTargetLayer) {
+    info.push_back("无选中图层");
+    return info;
+  }
+  
+  // 获取图层名称
+  std::string layerName = selectedTargetLayer->name();
+  if (layerName.empty()) {
+    layerName = "未命名图层";
+  }
+  info.push_back(layerName);
+  
+  // 获取图层类型
+  auto layerType = selectedTargetLayer->type();
+  std::string typeStr = "Unknown";
+  switch(layerType) {
+    case tgfx::LayerType::Image: typeStr = "Image"; break;
+    case tgfx::LayerType::Shape: typeStr = "Shape"; break;
+    case tgfx::LayerType::Text: typeStr = "Text"; break;
+    default: typeStr = "Other"; break;
+  }
+  info.push_back(typeStr);
+  
+  printf("[选中图层] 名称：'%s'，类型：%s\n", layerName.c_str(), typeStr.c_str());
+  
+  return info;
+}
+
 bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
   if (!appHost) {
     return false;
@@ -719,9 +826,12 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
     selectionBorder->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41, 204)));
 
     auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(bestLayer);
-    float scaleX = globalMatrix.getScaleX();
-    float scaleY = globalMatrix.getScaleY();
-    float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
+    // 正确提取缩放值，不受旋转影响
+    float scaleX = std::sqrt(globalMatrix.getScaleX() * globalMatrix.getScaleX() + 
+                             globalMatrix.getSkewY() * globalMatrix.getSkewY());
+    float scaleY = std::sqrt(globalMatrix.getSkewX() * globalMatrix.getSkewX() + 
+                             globalMatrix.getScaleY() * globalMatrix.getScaleY());
+    float layerAvgScale = (scaleX + scaleY) / 2.0f;
     float totalScale = layerAvgScale * lastZoom;
     float adjustedLineWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
     
@@ -856,9 +966,12 @@ void TGFXBaseView::createCornerHandles(std::shared_ptr<tgfx::Layer> layer) {
   auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
 
   // 角控制器大小与线宽按最简逻辑随缩放变化
-  float scaleX = globalMatrix.getScaleX();
-  float scaleY = globalMatrix.getScaleY();
-  float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
+  // 正确提取缩放值，不受旋转影响
+  float scaleX = std::sqrt(globalMatrix.getScaleX() * globalMatrix.getScaleX() + 
+                           globalMatrix.getSkewY() * globalMatrix.getSkewY());
+  float scaleY = std::sqrt(globalMatrix.getSkewX() * globalMatrix.getSkewX() + 
+                           globalMatrix.getScaleY() * globalMatrix.getScaleY());
+  float layerAvgScale = (scaleX + scaleY) / 2.0f;
   float totalScale = layerAvgScale * lastZoom;
   float borderWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
   float handleSize = borderWidth * s_handleSizeFactor;
@@ -941,9 +1054,12 @@ void TGFXBaseView::updateCornerHandles() {
 
   // 依据当前缩放与矩阵计算线宽与大小
   auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
-  float scaleX = globalMatrix.getScaleX();
-  float scaleY = globalMatrix.getScaleY();
-  float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
+  // 正确提取缩放值，不受旋转影响
+  float scaleX = std::sqrt(globalMatrix.getScaleX() * globalMatrix.getScaleX() + 
+                           globalMatrix.getSkewY() * globalMatrix.getSkewY());
+  float scaleY = std::sqrt(globalMatrix.getSkewX() * globalMatrix.getSkewX() + 
+                           globalMatrix.getScaleY() * globalMatrix.getScaleY());
+  float layerAvgScale = (scaleX + scaleY) / 2.0f;
   float totalScale = layerAvgScale * lastZoom;
   float borderWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
   float handleSize = borderWidth * s_handleSizeFactor;
@@ -1004,9 +1120,12 @@ void TGFXBaseView::updateSelectedLineWidth() {
 
   // 与角控制器一致：使用选中目标图层的全局矩阵计算缩放
   auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
-  float scaleX = globalMatrix.getScaleX();
-  float scaleY = globalMatrix.getScaleY();
-  float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
+  // 正确提取缩放值，不受旋转影响
+  float scaleX = std::sqrt(globalMatrix.getScaleX() * globalMatrix.getScaleX() + 
+                           globalMatrix.getSkewY() * globalMatrix.getSkewY());
+  float scaleY = std::sqrt(globalMatrix.getSkewX() * globalMatrix.getSkewX() + 
+                           globalMatrix.getScaleY() * globalMatrix.getScaleY());
+  float layerAvgScale = (scaleX + scaleY) / 2.0f;
   float totalScale = layerAvgScale * lastZoom;
   float adjustedLineWidth =
       totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
@@ -1126,9 +1245,12 @@ void TGFXBaseView::updateHighlightLineWidth() {
 
   // 计算缩放比例，调整线宽以保持视觉一致性
   // 同时考虑全局缩放(lastZoom)和图层变换矩阵
-  float scaleX = globalMatrix.getScaleX();
-  float scaleY = globalMatrix.getScaleY();
-  float layerAvgScale = (std::abs(scaleX) + std::abs(scaleY)) / 2.0f;
+  // 正确提取缩放值，不受旋转影响
+  float scaleX = std::sqrt(globalMatrix.getScaleX() * globalMatrix.getScaleX() + 
+                           globalMatrix.getSkewY() * globalMatrix.getSkewY());
+  float scaleY = std::sqrt(globalMatrix.getSkewX() * globalMatrix.getSkewX() + 
+                           globalMatrix.getScaleY() * globalMatrix.getScaleY());
+  float layerAvgScale = (scaleX + scaleY) / 2.0f;
 
   // 结合全局缩放和图层缩放计算最终的缩放比例
   float totalScale = layerAvgScale * lastZoom;

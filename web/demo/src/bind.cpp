@@ -26,6 +26,8 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
 
   // 注册 std::vector<float> 类型
   register_vector<float>("VectorFloat");
+  // 注册 std::vector<std::string> 类型
+  // register_vector<std::string>("VectorString");
 
   class_<TGFXBaseView>("TGFXBaseView")
       .function("setImage", &TGFXBaseView::setImage)
@@ -41,6 +43,9 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("resetHighlightLayer", &TGFXBaseView::resetHighlightLayer)
       .function("selectMoveLayer", &TGFXBaseView::selectMoveLayer)
       .function("moveHighlightLayer", &TGFXBaseView::moveHighlightLayer)
+      .function("rotateSelectedLayer", &TGFXBaseView::rotateSelectedLayer)
+      .function("getSelectedLayerCenter", &TGFXBaseView::getSelectedLayerCenter)
+      .function("getSelectedLayerInfo", &TGFXBaseView::getSelectedLayerInfo)
       .function("getMoveLayerPosition", &TGFXBaseView::getMoveLayerPosition)
       .function("getMoveLayerGlobalMatrix", &TGFXBaseView::getMoveLayerGlobalMatrix)
       .function("selectLayerAndCheckRedraw", &TGFXBaseView::selectLayerAndCheckRedraw)

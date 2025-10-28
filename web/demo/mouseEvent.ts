@@ -136,12 +136,6 @@ class CoordinateTransformer {
         const worldY = (screenY - shareData.offsetY) / shareData.zoom;
         return { worldX, worldY };
     }
-
-    static screenDeltaToWorldDelta(deltaX: number, deltaY: number, shareData: ShareData): {worldDeltaX: number, worldDeltaY: number} {
-        const worldDeltaX = deltaX / shareData.zoom;
-        const worldDeltaY = deltaY / shareData.zoom;
-        return { worldDeltaX, worldDeltaY };
-    }
 }
 
 // 简化的光标检测缓存类
@@ -359,6 +353,115 @@ let hasMoved = false;
 let lastPointX = 0;
 let lastPointY = 0;
 
+// 旋转状态管理
+class RotationStateManager {
+    private static instance: RotationStateManager;
+    private isRotating = false;
+    private lastPoint = { x: 0, y: 0 };
+    private cachedCenter: { x: number, y: number } | null = null;
+    private totalRotation = 0; // 累积旋转角度（弧度）
+    private cachedDistance = 0;
+
+    static getInstance(): RotationStateManager {
+        if (!RotationStateManager.instance) {
+            RotationStateManager.instance = new RotationStateManager();
+        }
+        return RotationStateManager.instance;
+    }
+
+    startRotation(startX: number, startY: number, centerX: number, centerY: number): void {
+        this.isRotating = true;
+        this.lastPoint = { x: startX, y: startY };
+        this.cachedCenter = { x: centerX, y: centerY };
+        this.totalRotation = 0;
+        this.cachedDistance = Math.hypot(startX - centerX, startY - centerY);
+        console.log(`[旋转状态] 开始旋转，缓存中心点：(${centerX}, ${centerY})，半径：${this.cachedDistance.toFixed(2)}`);
+    }
+
+    endRotation(): void {
+        this.isRotating = false;
+        this.cachedCenter = null;
+        this.cachedDistance = 0;
+        console.log(`[旋转状态] 结束旋转，总旋转角度：${(this.totalRotation * 180 / Math.PI).toFixed(2)}°`);
+    }
+
+    isInRotation(): boolean {
+        return this.isRotating;
+    }
+
+    getCachedCenter(): { x: number, y: number } | null {
+        return this.cachedCenter;
+    }
+
+    getCachedRadius(): number {
+        return this.cachedDistance;
+    }
+
+    setFallbackCenter(centerX: number, centerY: number): void {
+        this.cachedCenter = { x: centerX, y: centerY };
+    }
+
+    // 计算增量旋转角度
+    calculateIncrementalRotationAngle(currentX: number, currentY: number): number {
+        if (!this.cachedCenter) {
+            console.error('[旋转] 缓存中心点为空');
+            return 0;
+        }
+
+        const centerX = this.cachedCenter.x;
+        const centerY = this.cachedCenter.y;
+        const lastX = this.lastPoint.x;
+        const lastY = this.lastPoint.y;
+        
+        // 计算上一个位置和当前位置相对于中心点的向量
+        const lastVector = { x: lastX - centerX, y: lastY - centerY };
+        const currentVector = { x: currentX - centerX, y: currentY - centerY };
+
+        // 避免半径过小导致数值不稳定
+        const lastRadius = Math.hypot(lastVector.x, lastVector.y);
+        const currentRadius = Math.hypot(currentVector.x, currentVector.y);
+        const fallbackRadius = Math.max(this.cachedDistance, Number.EPSILON);
+        const minRadius = Math.max(fallbackRadius * 0.25, 1e-3);
+        if (lastRadius < minRadius || currentRadius < minRadius) {
+            console.warn('[旋转] 半径过小，忽略此次旋转增量');
+            return 0;
+        }
+        
+        // 计算角度差（增量）
+        const lastAngle = Math.atan2(lastVector.y, lastVector.x);
+        const currentAngle = Math.atan2(currentVector.y, currentVector.x);
+        
+        let deltaAngle = currentAngle - lastAngle;
+        
+        // 处理角度跨越-π到π的边界情况
+        if (deltaAngle > Math.PI) {
+            deltaAngle -= 2 * Math.PI;
+        } else if (deltaAngle < -Math.PI) {
+            deltaAngle += 2 * Math.PI;
+        }
+
+        // 详细的调试输出
+        const lastAngleDeg = lastAngle * 180 / Math.PI;
+        const currentAngleDeg = currentAngle * 180 / Math.PI;
+        const deltaAngleDeg = deltaAngle * 180 / Math.PI;
+        const accumulatedAngleDeg = (this.totalRotation + deltaAngle) * 180 / Math.PI;
+        
+        console.log(`[旋转角度] 鼠标从(${lastX.toFixed(1)}, ${lastY.toFixed(1)})移动到(${currentX.toFixed(1)}, ${currentY.toFixed(1)})`);
+        console.log(`[旋转角度] 中心点(${centerX.toFixed(1)}, ${centerY.toFixed(1)})`);
+        console.log(`[旋转角度] 上次角度: ${lastAngleDeg.toFixed(2)}°, 当前角度: ${currentAngleDeg.toFixed(2)}°, 变化: ${deltaAngleDeg.toFixed(4)}°, 累计: ${accumulatedAngleDeg.toFixed(2)}°`);
+
+        // 更新累计角度
+        this.totalRotation += deltaAngle;
+
+        // 更新最后位置，为下一次计算做准备
+        this.lastPoint = { x: currentX, y: currentY };
+        
+        return deltaAngle;
+    }
+}
+
+const rotationStateManager = RotationStateManager.getInstance();
+
 function ConvertCoordinates(e: MouseEvent, canvas: HTMLElement) {
     const rect = canvas.getBoundingClientRect();
     return {
@@ -444,6 +547,59 @@ export class GestureManager {
         this.timer = undefined;
     }
 
+    // 处理旋转操作
+    private handleRotation(currentX: number, currentY: number, shareData: ShareData) {
+        if (!shareData.tgfxBaseView) {
+            console.error('[旋转JS] shareData.tgfxBaseView 为空');
+            return;
+        }
+
+        try {
+            // 使用缓存的中心点，避免重复计算
+            const cachedCenter = rotationStateManager.getCachedCenter();
+            if (!cachedCenter) {
+                console.error('[旋转JS] 缓存中心点为空，无法继续旋转');
+                return;
+            }
+
+            // 将当前屏幕坐标转换为世界坐标
+            const currentWorldCoords = CoordinateTransformer.screenToWorld(currentX, currentY, shareData);
+
+            const radius = rotationStateManager.getCachedRadius();
+            const currentRadius = Math.hypot(
+                currentWorldCoords.worldX - cachedCenter.x,
+                currentWorldCoords.worldY - cachedCenter.y
+            );
+            const minimumUsableRadius = Math.max(radius * 0.25, 1e-3);
+            if (currentRadius < minimumUsableRadius) {
+                console.warn('[旋转JS] 当前半径过小，忽略旋转');
+                return;
+            }
+
+            // 计算增量旋转角度（使用缓存的中心点）
+            const deltaAngle = rotationStateManager.calculateIncrementalRotationAngle(
+                currentWorldCoords.worldX, currentWorldCoords.worldY
+            );
+
+            const angleDegrees = deltaAngle * 180 / Math.PI;
+            
+            if (Math.abs(deltaAngle) > 0) { // 只要有角度变化就旋转
+                console.log(`[旋转JS] 执行旋转 - 角度: ${angleDegrees.toFixed(4)}°`);
+                
+                // 调用 C++ 端的旋转方法，让C++使用本地几何中心
+                (shareData.tgfxBaseView as any).rotateSelectedLayer(deltaAngle, Number.NaN, Number.NaN);
+                
+                // 标记需要重绘
+                shareData.tgfxBaseView?.markDirty();
+            } else {
+                console.log(`[旋转JS] 无角度变化，跳过旋转`);
+            }
+
+        } catch (error) {
+            console.error('[旋转JS] 旋转操作失败:', error);
+        }
+    }
+
     private resetScrollTimeout(
         event: WheelEvent,
         shareData: ShareData,
@@ -512,25 +668,33 @@ export class GestureManager {
     }
 
     public onMouseMove(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
+        const clientXY = ConvertCoordinates(event, canvas);
+
+        if (rotationStateManager.isInRotation()) {
+            this.handleRotation(clientXY.clientX, clientXY.clientY, shareData);
+            lastPointX = clientXY.clientX;
+            lastPointY = clientXY.clientY;
+            return;
+        }
+
         if (isMouseDown) {
             hasMoved = true;
 
-            const clientXY = ConvertCoordinates(event, canvas);
+            const cursorType = cursorDetectionCache.detectCursorType(clientXY.clientX, clientXY.clientY, shareData);
+            if (cursorType === 'rotate') {
+                return;
+            }
+
             const screenDeltaX = clientXY.clientX - lastPointX;
             const screenDeltaY = clientXY.clientY - lastPointY;
 
-            // 只有当增量不为零时才处理移动
             if (screenDeltaX !== 0 || screenDeltaY !== 0) {
-                // 直接使用屏幕增量，让后端处理坐标变换
                 try {
-                    if (shareData.tgfxBaseView) {
-            shareData.tgfxBaseView.moveHighlightLayer(screenDeltaX, screenDeltaY);
-        }
+                    shareData.tgfxBaseView?.moveHighlightLayer(screenDeltaX, screenDeltaY);
                 } catch (error) {
                     console.error('移动图层时出错:', error);
                 }
 
-                // 更新lastPoint
                 lastPointX = clientXY.clientX;
                 lastPointY = clientXY.clientY;
 
@@ -541,8 +705,6 @@ export class GestureManager {
             return;
         }
 
-        // 鼠标悬停高亮
-        const clientXY = ConvertCoordinates(event, canvas);
         const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
         const reDraw = shareData.tgfxBaseView?.highlightLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
         if (reDraw) {
@@ -550,7 +712,6 @@ export class GestureManager {
             animationLoop(shareData);
         }
 
-        // 光标检测和设置（使用缓存）
         const cursorType = cursorDetectionCache.detectCursorType(clientXY.clientX, clientXY.clientY, shareData);
         setCursor(canvas, cursorType);
     }
@@ -563,6 +724,41 @@ export class GestureManager {
         if (event.button === 0) { // 判断是否为左键
             const clientXY = ConvertCoordinates(event, canvas);
             const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+
+            // 检测当前光标类型，如果是旋转光标，则开始旋转操作
+            const cursorType = cursorDetectionCache.detectCursorType(clientXY.clientX, clientXY.clientY, shareData);
+            if (cursorType === 'rotate') {
+                console.log('[旋转] 开始旋转操作');
+                
+                // 获取选中图层信息
+                const layerInfo = (shareData.tgfxBaseView as any).getSelectedLayerInfo();
+                if (layerInfo && layerInfo.size && layerInfo.size() >= 2) {
+                    const layerName = layerInfo.get(0);
+                    const layerType = layerInfo.get(1);
+                    console.log(`[旋转] 选中图层：${layerName} (${layerType})`);
+                }
+                
+                // 获取并缓存中心点
+                const centerVector = (shareData.tgfxBaseView as any).getSelectedLayerCenter();
+                if (centerVector && typeof centerVector.size === 'function' && centerVector.size() >= 2) {
+                    const centerX = centerVector.get(0);
+                    const centerY = centerVector.get(1);
+                    
+                    // 转换为世界坐标并开始旋转
+                    const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+                    rotationStateManager.startRotation(worldCoords.worldX, worldCoords.worldY, centerX, centerY);
+                    rotationStateManager.setFallbackCenter(centerX, centerY);
+                    
+                    isMouseDown = true;
+                    hasMoved = false;
+                    lastPointX = clientXY.clientX;
+                    lastPointY = clientXY.clientY;
+                    return;
+                } else {
+                    console.error('[旋转] 无法获取图层中心点，取消旋转操作');
+                    return;
+                }
+            }
 
             shareData.tgfxBaseView?.resetHighlightLayer();
             if (shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY)) {
@@ -578,6 +774,18 @@ export class GestureManager {
 
     public onMouseUp(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
         if (event.button === 0) { // 判断是否为左键
+            // 如果正在旋转，结束旋转状态
+            if (rotationStateManager.isInRotation()) {
+                console.log('[旋转] 结束旋转操作');
+                rotationStateManager.endRotation();
+                // 重置状态
+                isMouseDown = false;
+                hasMoved = false;
+                shareData.tgfxBaseView?.markDirty();
+                animationLoop(shareData);
+                return;
+            }
+
             if (!hasMoved) {
                 // 单击事件：调用选中方法
                 const clientXY = ConvertCoordinates(event, canvas);

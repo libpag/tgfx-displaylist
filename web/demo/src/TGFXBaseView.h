@@ -56,6 +56,13 @@ class TGFXBaseView {
 
   void moveHighlightLayer(float deltaX, float deltaY);
 
+  // 旋转操作相关方法
+  void rotateSelectedLayer(float angle, float worldCenterX, float worldCenterY);
+  std::vector<float> getSelectedLayerCenter();
+  
+  // 获取选中图层信息
+  std::vector<std::string> getSelectedLayerInfo();
+
   /**
    * 获取当前移动图层的全局变换矩阵信息
    * 返回数组: [scaleX, scaleY, translateX, translateY]
