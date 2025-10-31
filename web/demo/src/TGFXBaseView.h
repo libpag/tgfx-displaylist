@@ -60,8 +60,17 @@ class TGFXBaseView {
   void rotateSelectedLayer(float angle, float worldCenterX, float worldCenterY);
   std::vector<float> getSelectedLayerCenter();
   
+  // 缩放操作相关方法
+  void scaleSelectedLayer(float scaleX, float scaleY, float worldCenterX, float worldCenterY);
+  
+  // 使用本地坐标作为枢轴的缩放方法
+  void scaleSelectedLayerWithLocalPivot(float scaleX, float scaleY, float localPivotX, float localPivotY);
+  
   // 获取选中图层信息
   std::vector<std::string> getSelectedLayerInfo();
+  
+  // 获取选中图层的旋转角度（弧度）
+  float getSelectedLayerRotation();
 
   /**
    * 获取当前移动图层的全局变换矩阵信息
@@ -84,6 +93,21 @@ class TGFXBaseView {
   // 获取选中图层的4个顶点坐标（屏幕坐标系）
   // 返回数组: [左上角x, 左上角y, 右上角x, 右上角y, 右下角x, 右下角y, 左下角x, 左下角y]
   std::vector<float> getSelectedLayerCorners();
+  
+  // 获取角控制器的世界坐标（直接从角控制器获取）
+  // 参数：cornerIndex (0=左上, 1=右上, 2=右下, 3=左下)
+  // 返回数组: [x, y]，如果角控制器不存在则返回空数组
+  std::vector<float> getCornerHandlePosition(int cornerIndex);
+  
+  // 获取选中图层的本地边界角坐标
+  // 参数：cornerIndex (0=左上, 1=右上, 2=右下, 3=左下)
+  // 返回数组: [localX, localY]，如果没有选中图层则返回空数组
+  std::vector<float> getSelectedLayerLocalCorner(int cornerIndex);
+  
+  // 将选中图层的本地坐标转换为世界坐标
+  // 参数：localX, localY - 本地坐标
+  // 返回数组: [worldX, worldY]，如果没有选中图层则返回空数组
+  std::vector<float> localToWorldCoords(float localX, float localY);
   
   // 旋转区域检测
   bool isPointInRotateZone(float x, float y);

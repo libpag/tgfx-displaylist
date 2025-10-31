@@ -1,3 +1,21 @@
+/////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//  Tencent is pleased to support the open source community by making tgfx-displaylist available.
+//
+//  Copyright (C) 2025 Tencent. All rights reserved.
+//
+//  Licensed under the BSD 3-Clause License (the "License"); you may not use this file except
+//  in compliance with the License. You may obtain a copy of the License at
+//
+//      https://opensource.org/licenses/BSD-3-Clause
+//
+//  unless required by applicable law or agreed to in writing, software distributed under the
+//  license is distributed on an "as is" basis, without warranties or conditions of any kind,
+//  either express or implied. see the license for the specific language governing permissions
+//  and limitations under the license.
+//
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
 import {TGFXBaseView, ShareData, shareData, draw, animationLoop} from './common';
 
 // 光标工厂类 - 负责创建和缓存光标
@@ -12,41 +30,40 @@ class CursorFactory {
         return CursorFactory.instance;
     }
 
-    // 创建方向箭头光标
-    private createArrowCursor(direction: string): string {
-        const svgMap: { [key: string]: string } = {
-            // ↘ 右下方向
-            'se-resize': `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path d="M4 4L20 20" stroke="black" stroke-width="3"/>
-                <path d="M20 20L14 20L20 14Z" fill="black"/>
-            </svg>`,
-
-            // ↙ 左下方向
-            'sw-resize': `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path d="M20 4L4 20" stroke="black" stroke-width="3"/>
-                <path d="M4 20L10 20L4 14Z" fill="black"/>
-            </svg>`,
-
-            // ↗ 右上方向
-            'ne-resize': `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path d="M4 20L20 4" stroke="black" stroke-width="3"/>
-                <path d="M20 4L14 4L20 10Z" fill="black"/>
-            </svg>`,
-
-            // ↖ 左上方向
-            'nw-resize': `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path d="M20 20L4 4" stroke="black" stroke-width="3"/>
-                <path d="M4 4L10 4L4 10Z" fill="black"/>
-            </svg>`,
-
-            // 旋转
-            'rotate': `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 3C16.97 3 21 7.03 21 12C21 16.97 16.97 21 12 21C7.03 21 3 16.97 3 12C3 9.5 4 7.26 5.64 5.64" stroke="black" stroke-width="2" fill="none"/>
-                <path d="M9 5L5.64 5.64L6.28 9Z" fill="black"/>
-            </svg>`
+    // 创建方向箭头光标（支持旋转）
+    private createArrowCursor(direction: string, rotationAngle: number = 0): string {
+        // 基础方向对应的角度（度）- 箭头指向中心
+        const baseAngles: { [key: string]: number } = {
+            'nw-resize': 180,   // 左上角 → 向右指向中心
+            'ne-resize': -90,   // 右上角 → 向下指向中心
+            'se-resize': 0,     // 右下角 → 向左指向中心
+            'sw-resize': 90     // 左下角 → 向上指向中心
         };
 
-        const svg = svgMap[direction] || svgMap['nw-resize'];
+        let baseAngle = baseAngles[direction] || 0;
+
+        // 如果当前图层发生了翻转，需要修正箭头朝向
+        const flipState = scaleStateManager.getFlipState();
+        if (flipState) {
+            const { isFlippedX, isFlippedY } = flipState;
+            if (isFlippedX) {
+                baseAngle = 360 - baseAngle;
+            }
+            if (isFlippedY) {
+                baseAngle = 180 - baseAngle;
+            }
+        }
+
+        const totalAngle = baseAngle + rotationAngle;
+
+        // 创建旋转后的箭头 SVG
+        const svg = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <g transform="rotate(${totalAngle} 12 12)">
+                <path d="M4 4L20 20" stroke="black" stroke-width="3"/>
+                <path d="M20 20L14 20L20 14Z" fill="black"/>
+            </g>
+        </svg>`;
+
         const encoded = btoa(svg);
         return `url('data:image/svg+xml;base64,${encoded}') 12 12, auto`;
     }
@@ -91,22 +108,27 @@ class CursorFactory {
         return `url('${dataUrl}') 12 12, auto`;
     }
 
-    // 获取光标（带缓存）
-    getCursor(type: string): string {
-        if (this.cursorCache.has(type)) {
-            return this.cursorCache.get(type)!;
+    // 获取光标（带缓存，支持旋转角度）
+    getCursor(type: string, rotationAngle: number = 0): string {
+        // 为旋转后的光标创建唯一的缓存键
+        const cacheKey = rotationAngle !== 0 ? `${type}_${rotationAngle.toFixed(2)}` : type;
+        
+        if (this.cursorCache.has(cacheKey)) {
+            return this.cursorCache.get(cacheKey)!;
         }
 
         let cursor: string;
         if (type === 'rotate') {
             cursor = this.createRotateCursor();
         } else if (['nw-resize', 'ne-resize', 'sw-resize', 'se-resize'].includes(type)) {
-            cursor = this.createArrowCursor(type);
+            // 将弧度转换为度
+            const rotationDegrees = rotationAngle * 180 / Math.PI;
+            cursor = this.createArrowCursor(type, rotationDegrees);
         } else {
             cursor = type; // 使用系统默认光标
         }
 
-        this.cursorCache.set(type, cursor);
+        this.cursorCache.set(cacheKey, cursor);
         return cursor;
     }
 
@@ -246,7 +268,7 @@ class CursorDetectionCache {
     }
 
     // 检测具体是哪个角控制器
-    private detectCornerPosition(mouseX: number, mouseY: number, shareData: ShareData): { position: string; distance: number } | null {
+    public detectCornerPosition(mouseX: number, mouseY: number, shareData: ShareData): { position: string; distance: number } | null {
         if (!shareData.tgfxBaseView) return null;
 
         try {
@@ -322,9 +344,21 @@ class CursorDetectionCache {
 const cursorFactory = CursorFactory.getInstance();
 const cursorDetectionCache = new CursorDetectionCache();
 
-// 设置光标样式（使用工厂模式）
-function setCursor(canvas: HTMLElement, cursorType: string) {
-    const cursor = cursorFactory.getCursor(cursorType);
+// 设置光标样式（使用工厂模式，支持旋转）
+function setCursor(canvas: HTMLElement, cursorType: string, shareData?: ShareData) {
+    let rotationAngle = 0;
+    
+    // 如果是缩放光标且有选中图层，获取旋转角度
+    if (['nw-resize', 'ne-resize', 'sw-resize', 'se-resize'].includes(cursorType) && 
+        shareData && shareData.tgfxBaseView) {
+        try {
+            rotationAngle = (shareData.tgfxBaseView as any).getSelectedLayerRotation();
+        } catch (error) {
+            console.error('获取旋转角度失败:', error);
+        }
+    }
+    
+    const cursor = cursorFactory.getCursor(cursorType, rotationAngle);
     canvas.style.cursor = cursor;
 }
 
@@ -354,6 +388,218 @@ let lastPointX = 0;
 let lastPointY = 0;
 
 // 旋转状态管理
+// 缩放状态管理器
+class ScaleStateManager {
+    private static instance: ScaleStateManager;
+    private isScaling = false;
+    private lastPoint = { x: 0, y: 0 }; // 上一帧的鼠标位置
+    private cachedCenter: { x: number, y: number } | null = null;
+    private lastDistance = 0; // 上一帧的距离
+    private cornerIndex = -1; // 0:左上, 1:右上, 2:右下, 3:左下
+    private oppositeCornerLocal: { x: number, y: number } | null = null; // 对角点的本地坐标（不变）
+    private isFlippedX = false; // X轴是否已翻转
+    private isFlippedY = false; // Y轴是否已翻转
+    private currentFlipState: { isFlippedX: boolean; isFlippedY: boolean } = {
+        isFlippedX: false,
+        isFlippedY: false
+    };
+
+    static getInstance(): ScaleStateManager {
+        if (!ScaleStateManager.instance) {
+            ScaleStateManager.instance = new ScaleStateManager();
+        }
+        return ScaleStateManager.instance;
+    }
+
+    startScaling(startX: number, startY: number, centerX: number, centerY: number, cornerIdx: number, localX: number, localY: number): void {
+        this.isScaling = true;
+        this.lastPoint = { x: startX, y: startY };
+        this.cachedCenter = { x: centerX, y: centerY };
+        this.cornerIndex = cornerIdx;
+        this.oppositeCornerLocal = { x: localX, y: localY }; // 记录本地坐标
+
+        const initialFlipX = this.checkFlipX(startX, centerX);
+        const initialFlipY = this.checkFlipY(startY, centerY);
+        const deltaX = startX - centerX;
+        const deltaY = startY - centerY;
+        const effectiveDeltaX = initialFlipX ? -deltaX : deltaX;
+        const effectiveDeltaY = initialFlipY ? -deltaY : deltaY;
+        this.lastDistance = Math.hypot(effectiveDeltaX, effectiveDeltaY);
+        this.isFlippedX = initialFlipX;
+        this.isFlippedY = initialFlipY;
+        this.currentFlipState = { isFlippedX: initialFlipX, isFlippedY: initialFlipY };
+        
+        const cornerNames = ['左上角', '右上角', '右下角', '左下角'];
+        console.log(`\n[缩放开始] ========== 开始缩放 ==========`);
+        console.log(`[缩放开始] 操作角：${cornerNames[cornerIdx]} (索引${cornerIdx})`);
+        console.log(`[缩放开始] 鼠标起始世界坐标：(${startX.toFixed(2)}, ${startY.toFixed(2)})`);
+        console.log(`[缩放开始] 对角点世界坐标（缓存）：(${centerX.toFixed(2)}, ${centerY.toFixed(2)})`);
+        console.log(`[缩放开始] 对角点本地坐标（固定）：(${localX.toFixed(2)}, ${localY.toFixed(2)})`);
+        console.log(`[缩放开始] 初始距离：${this.lastDistance.toFixed(2)}`);
+        console.log(`[缩放开始] 初始翻转状态：X=${this.isFlippedX}, Y=${this.isFlippedY}`);
+    }
+
+    endScaling(): void {
+        console.log(`\n[缩放结束] ========== 结束缩放 ==========`);
+        console.log(`[缩放结束] 最终翻转状态：X=${this.isFlippedX}, Y=${this.isFlippedY}`);
+        console.log(`[缩放结束] 最终角索引：${this.cornerIndex}`);
+        
+        const finalFlipState = { isFlippedX: this.isFlippedX, isFlippedY: this.isFlippedY };
+
+        this.isScaling = false;
+        this.cachedCenter = null;
+        this.cornerIndex = -1;
+        this.lastDistance = 0;
+        this.oppositeCornerLocal = null;
+        this.currentFlipState = finalFlipState;
+        this.isFlippedX = false;
+        this.isFlippedY = false;
+    }
+
+    getFlipState(): { isFlippedX: boolean; isFlippedY: boolean } {
+        return { ...this.currentFlipState };
+    }
+
+    isInScaling(): boolean {
+        return this.isScaling;
+    }
+
+    getCachedCenter(): { x: number, y: number } | null {
+        return this.cachedCenter;
+    }
+
+    getCornerIndex(): number {
+        return this.cornerIndex;
+    }
+
+    getOppositeCornerLocal(): { x: number, y: number } | null {
+        return this.oppositeCornerLocal;
+    }
+
+    // 计算增量缩放因子（基于鼠标到对角点的距离变化），并检测翻转
+    calculateIncrementalScaleFactor(currentX: number, currentY: number, oppositeCenterX: number, oppositeCenterY: number): { scaleX: number, scaleY: number } {
+        // 检测是否需要翻转
+        const shouldFlipX = this.checkFlipX(currentX, oppositeCenterX);
+        const shouldFlipY = this.checkFlipY(currentY, oppositeCenterY);
+        
+        // 计算当前鼠标相对于对角点的向量
+        const deltaX = currentX - oppositeCenterX;
+        const deltaY = currentY - oppositeCenterY;
+        
+        // 根据翻转状态调整向量方向，计算有效距离
+        const effectiveDeltaX = shouldFlipX ? -deltaX : deltaX;
+        const effectiveDeltaY = shouldFlipY ? -deltaY : deltaY;
+        const currentDistance = Math.hypot(effectiveDeltaX, effectiveDeltaY);
+        
+        // console.log(`[缩放计算] 鼠标世界坐标：(${currentX.toFixed(2)}, ${currentY.toFixed(2)})`);
+        // console.log(`[缩放计算] 对角点世界坐标：(${oppositeCenterX.toFixed(2)}, ${oppositeCenterY.toFixed(2)})`);
+        // console.log(`[缩放计算] 当前角索引：${this.cornerIndex}，当前翻转状态：X=${this.isFlippedX}, Y=${this.isFlippedY}`);
+        // console.log(`[缩放计算] 应该翻转：X=${shouldFlipX}, Y=${shouldFlipY}`);
+        // console.log(`[缩放计算] 向量：(${deltaX.toFixed(2)}, ${deltaY.toFixed(2)})，有效向量：(${effectiveDeltaX.toFixed(2)}, ${effectiveDeltaY.toFixed(2)})`);
+        
+        if (this.lastDistance === 0) {
+            // 第一次调用，初始化距离和翻转状态
+            this.lastDistance = currentDistance;
+            this.isFlippedX = shouldFlipX;
+            this.isFlippedY = shouldFlipY;
+            this.currentFlipState = { isFlippedX: shouldFlipX, isFlippedY: shouldFlipY };
+            // console.log(`[缩放计算] 初始化：距离=${currentDistance.toFixed(2)}`);
+            return { scaleX: 1.0, scaleY: 1.0 };
+        }
+        
+        // 检查是否有翻转发生
+        const flipXChanged = shouldFlipX !== this.isFlippedX;
+        const flipYChanged = shouldFlipY !== this.isFlippedY;
+        
+        let scaleX = 1.0;
+        let scaleY = 1.0;
+        
+        // 如果有翻转发生，只应用翻转，不缩放
+        if (flipXChanged || flipYChanged) {
+            const cornerNames = ['左上角', '右上角', '右下角', '左下角'];
+            console.log(`\n[翻转发生] ==================`);
+            console.log(`[翻转发生] 操作角：${cornerNames[this.cornerIndex]} (索引${this.cornerIndex})`);
+            console.log(`[翻转发生] 鼠标位置：(${currentX.toFixed(2)}, ${currentY.toFixed(2)})`);
+            console.log(`[翻转发生] 对角点位置：(${oppositeCenterX.toFixed(2)}, ${oppositeCenterY.toFixed(2)})`);
+            console.log(`[翻转发生] X变化=${flipXChanged}, Y变化=${flipYChanged}`);
+            const previousFlipX = this.isFlippedX;
+            const previousFlipY = this.isFlippedY;
+            if (flipXChanged) {
+                scaleX = -1.0;
+                const isLeftCorner = (this.cornerIndex === 0 || this.cornerIndex === 3);
+                console.log(`[翻转发生] X轴翻转: ${previousFlipX} -> ${shouldFlipX} (初始位置=${isLeftCorner ? '左' : '右'})`);
+                this.isFlippedX = shouldFlipX;
+            }
+            if (flipYChanged) {
+                scaleY = -1.0;
+                const isTopCorner = (this.cornerIndex === 0 || this.cornerIndex === 1);
+                console.log(`[翻转发生] Y轴翻转: ${previousFlipY} -> ${shouldFlipY} (初始位置=${isTopCorner ? '上' : '下'})`);
+                this.isFlippedY = shouldFlipY;
+            }
+            this.currentFlipState = { isFlippedX: this.isFlippedX, isFlippedY: this.isFlippedY };
+            console.log(`[翻转发生] 翻转后状态：X=${this.isFlippedX}, Y=${this.isFlippedY}`);
+            console.log(`[翻转发生] ==================\n`);
+            this.lastDistance = Math.max(currentDistance, Number.EPSILON);
+        } else {
+            // 没有翻转，正常计算缩放因子
+            const scaleFactor = currentDistance / this.lastDistance;
+            scaleX = scaleFactor;
+            scaleY = scaleFactor;
+            // console.log(`[缩放计算] 正常缩放：距离 ${this.lastDistance.toFixed(2)} -> ${currentDistance.toFixed(2)}，因子=${scaleFactor.toFixed(4)}`);
+            // 更新上一帧的距离
+            this.lastDistance = currentDistance;
+        }
+        
+        this.lastPoint = { x: currentX, y: currentY };
+        
+        return { scaleX, scaleY };
+    }
+    
+    // 检测X轴是否应该翻转
+    private checkFlipX(currentX: number, centerX: number): boolean {
+        let shouldFlip = false;
+        const cornerNames = ['左上角', '右上角', '右下角', '左下角'];
+        
+        // 根据角索引判断是左侧还是右侧
+        const isLeftCorner = (this.cornerIndex === 0 || this.cornerIndex === 3);
+        
+        if (isLeftCorner) {
+            // 左侧角 -> 鼠标在中心点右侧时翻转
+            shouldFlip = currentX > centerX;
+            // console.log(`[翻转检测X] ${cornerNames[this.cornerIndex]}(${this.cornerIndex})，已翻转=${this.isFlippedX}，位置=左，鼠标X=${currentX.toFixed(2)} ${shouldFlip ? '>' : '<='} 中心X=${centerX.toFixed(2)} => ${shouldFlip ? '需要翻转' : '不翻转'}`);
+        } else {
+            // 右侧角 -> 鼠标在中心点左侧时翻转
+            shouldFlip = currentX < centerX;
+            // console.log(`[翻转检测X] ${cornerNames[this.cornerIndex]}(${this.cornerIndex})，已翻转=${this.isFlippedX}，位置=右，鼠标X=${currentX.toFixed(2)} ${shouldFlip ? '<' : '>='} 中心X=${centerX.toFixed(2)} => ${shouldFlip ? '需要翻转' : '不翻转'}`);
+        }
+        
+        return shouldFlip;
+    }
+    
+    // 检测Y轴是否应该翻转
+    private checkFlipY(currentY: number, centerY: number): boolean {
+        let shouldFlip = false;
+        const cornerNames = ['左上角', '右上角', '右下角', '左下角'];
+        
+        // 根据角索引判断是上侧还是下侧
+        const isTopCorner = (this.cornerIndex === 0 || this.cornerIndex === 1);
+        
+        if (isTopCorner) {
+            // 上侧角 -> 鼠标在中心点下方时翻转
+            shouldFlip = currentY > centerY;
+            // console.log(`[翻转检测Y] ${cornerNames[this.cornerIndex]}(${this.cornerIndex})，已翻转=${this.isFlippedY}，位置=上，鼠标Y=${currentY.toFixed(2)} ${shouldFlip ? '>' : '<='} 中心Y=${centerY.toFixed(2)} => ${shouldFlip ? '需要翻转' : '不翻转'}`);
+        } else {
+            // 下侧角 -> 鼠标在中心点上方时翻转
+            shouldFlip = currentY < centerY;
+            // console.log(`[翻转检测Y] ${cornerNames[this.cornerIndex]}(${this.cornerIndex})，已翻转=${this.isFlippedY}，位置=下，鼠标Y=${currentY.toFixed(2)} ${shouldFlip ? '<' : '>='} 中心Y=${centerY.toFixed(2)} => ${shouldFlip ? '需要翻转' : '不翻转'}`);
+        }
+        
+        return shouldFlip;
+    }
+}
+
+const scaleStateManager = ScaleStateManager.getInstance();
+
 class RotationStateManager {
     private static instance: RotationStateManager;
     private isRotating = false;
@@ -443,17 +689,22 @@ class RotationStateManager {
         // 详细的调试输出
         const lastAngleDeg = lastAngle * 180 / Math.PI;
         const currentAngleDeg = currentAngle * 180 / Math.PI;
-        const deltaAngleDeg = deltaAngle * 180 / Math.PI;
-        const accumulatedAngleDeg = (this.totalRotation + deltaAngle) * 180 / Math.PI;
+        let deltaAngleDeg = deltaAngle * 180 / Math.PI;
+        let accumulatedAngleDeg = (this.totalRotation + deltaAngle) * 180 / Math.PI;
+
+        const flipState = scaleStateManager.getFlipState();
+        if (flipState.isFlippedX !== flipState.isFlippedY) {
+            deltaAngle = -deltaAngle;
+            deltaAngleDeg = -deltaAngleDeg;
+            accumulatedAngleDeg = (this.totalRotation + deltaAngle) * 180 / Math.PI;
+        }
         
+        console.log(`[旋转角度] 翻转状态: X=${flipState.isFlippedX}, Y=${flipState.isFlippedY}`);
         console.log(`[旋转角度] 鼠标从(${lastX.toFixed(1)}, ${lastY.toFixed(1)})移动到(${currentX.toFixed(1)}, ${currentY.toFixed(1)})`);
         console.log(`[旋转角度] 中心点(${centerX.toFixed(1)}, ${centerY.toFixed(1)})`);
         console.log(`[旋转角度] 上次角度: ${lastAngleDeg.toFixed(2)}°, 当前角度: ${currentAngleDeg.toFixed(2)}°, 变化: ${deltaAngleDeg.toFixed(4)}°, 累计: ${accumulatedAngleDeg.toFixed(2)}°`);
 
-        // 更新累计角度
         this.totalRotation += deltaAngle;
-
-        // 更新最后位置，为下一次计算做准备
         this.lastPoint = { x: currentX, y: currentY };
         
         return deltaAngle;
@@ -600,6 +851,57 @@ export class GestureManager {
         }
     }
 
+    // 处理缩放操作
+    private handleScaling(currentX: number, currentY: number, shareData: ShareData): void {
+        try {
+            const cornerIdx = scaleStateManager.getCornerIndex();
+            if (cornerIdx < 0) {
+                console.error('[缩放JS] 角索引无效');
+                return;
+            }
+
+            // 获取对角点的本地坐标（缓存的，不会变）
+            const localCorner = scaleStateManager.getOppositeCornerLocal();
+            if (!localCorner) {
+                console.error('[缩放JS] 无法获取对角点本地坐标');
+                return;
+            }
+
+            // console.log(`[缩放JS] 对角点本地坐标（固定）：(${localCorner.x.toFixed(2)}, ${localCorner.y.toFixed(2)})`);
+
+            // 将本地坐标转换为当前的世界坐标（用于计算距离）
+            const worldCornerVector = (shareData.tgfxBaseView as any).localToWorldCoords(localCorner.x, localCorner.y);
+            if (!worldCornerVector || typeof worldCornerVector.size !== 'function' || worldCornerVector.size() < 2) {
+                console.error('[缩放JS] 无法转换对角点坐标');
+                return;
+            }
+
+            const oppositeCenterX = worldCornerVector.get(0);
+            const oppositeCenterY = worldCornerVector.get(1);
+
+            // console.log(`[缩放JS] 对角点世界坐标（转换后）：(${oppositeCenterX.toFixed(2)}, ${oppositeCenterY.toFixed(2)})`);
+
+            // 计算增量缩放因子（基于鼠标到对角点世界坐标的距离），并检测翻转
+            const scaleFactors = scaleStateManager.calculateIncrementalScaleFactor(
+                currentX, currentY, oppositeCenterX, oppositeCenterY
+            );
+            
+            if (Math.abs(scaleFactors.scaleX - 1.0) > 0.0001 || Math.abs(scaleFactors.scaleY - 1.0) > 0.0001) { // 只有缩放变化超过阈值才执行
+                // console.log(`[缩放JS] 应用缩放：scaleX=${scaleFactors.scaleX.toFixed(4)}, scaleY=${scaleFactors.scaleY.toFixed(4)}，枢轴本地坐标：(${localCorner.x.toFixed(2)}, ${localCorner.y.toFixed(2)})`);
+                // 调用 C++ 端的缩放方法，直接使用本地坐标作为枢轴，支持独立的 X/Y 缩放
+                (shareData.tgfxBaseView as any).scaleSelectedLayerWithLocalPivot(
+                    scaleFactors.scaleX, scaleFactors.scaleY, localCorner.x, localCorner.y
+                );
+                
+                // 标记需要重绘
+                shareData.tgfxBaseView?.markDirty();
+            }
+
+        } catch (error) {
+            console.error('[缩放JS] 缩放操作失败:', error);
+        }
+    }
+
     private resetScrollTimeout(
         event: WheelEvent,
         shareData: ShareData,
@@ -670,20 +972,26 @@ export class GestureManager {
     public onMouseMove(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
         const clientXY = ConvertCoordinates(event, canvas);
 
-        if (rotationStateManager.isInRotation()) {
-            this.handleRotation(clientXY.clientX, clientXY.clientY, shareData);
-            lastPointX = clientXY.clientX;
-            lastPointY = clientXY.clientY;
+        // 优先处理缩放
+        if (scaleStateManager.isInScaling()) {
+            const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+            this.handleScaling(worldCoords.worldX, worldCoords.worldY, shareData);
+            shareData.tgfxBaseView?.markDirty();
+            animationLoop(shareData);
             return;
         }
 
+        // 处理旋转
+        if (rotationStateManager.isInRotation()) {
+            this.handleRotation(clientXY.clientX, clientXY.clientY, shareData);
+            shareData.tgfxBaseView?.markDirty();
+            animationLoop(shareData);
+            return;
+        }
+
+        // 处理普通拖动移动
         if (isMouseDown) {
             hasMoved = true;
-
-            const cursorType = cursorDetectionCache.detectCursorType(clientXY.clientX, clientXY.clientY, shareData);
-            if (cursorType === 'rotate') {
-                return;
-            }
 
             const screenDeltaX = clientXY.clientX - lastPointX;
             const screenDeltaY = clientXY.clientY - lastPointY;
@@ -705,6 +1013,7 @@ export class GestureManager {
             return;
         }
 
+        // 鼠标悬停时的高亮和光标更新
         const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
         const reDraw = shareData.tgfxBaseView?.highlightLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
         if (reDraw) {
@@ -713,7 +1022,7 @@ export class GestureManager {
         }
 
         const cursorType = cursorDetectionCache.detectCursorType(clientXY.clientX, clientXY.clientY, shareData);
-        setCursor(canvas, cursorType);
+        setCursor(canvas, cursorType, shareData);
     }
 
     public onMouseLeave(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
@@ -725,8 +1034,56 @@ export class GestureManager {
             const clientXY = ConvertCoordinates(event, canvas);
             const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
 
-            // 检测当前光标类型，如果是旋转光标，则开始旋转操作
+            // 检测当前光标类型
             const cursorType = cursorDetectionCache.detectCursorType(clientXY.clientX, clientXY.clientY, shareData);
+            
+            // 优先检测角控制器（缩放）- 只有当光标是缩放类型时才进入缩放模式
+            if (cursorType === 'nw-resize' || cursorType === 'ne-resize' || 
+                cursorType === 'sw-resize' || cursorType === 'se-resize') {
+                
+                const cornerInfo = cursorDetectionCache.detectCornerPosition(clientXY.clientX, clientXY.clientY, shareData);
+                if (cornerInfo && cornerInfo.distance < 8) { // 确保在角控制器上
+                    console.log(`[缩放] 开始缩放操作，角位置：${cornerInfo.position}`);
+                    
+                    // 确定角索引：左上0, 右上1, 右下2, 左下3
+                    const cornerIndexMap: { [key: string]: number } = {
+                        '左上角': 0, '右上角': 1, '右下角': 2, '左下角': 3
+                    };
+                    const cornerIdx = cornerIndexMap[cornerInfo.position] ?? -1;
+                    
+                    // 获取对角点的本地坐标（图层坐标系，不会随缩放变化）
+                    const oppositeCornerIdx = (cornerIdx + 2) % 4;
+                    const localCornerVector = (shareData.tgfxBaseView as any).getSelectedLayerLocalCorner(oppositeCornerIdx);
+                    
+                    if (localCornerVector && typeof localCornerVector.size === 'function' && localCornerVector.size() >= 2) {
+                        const localX = localCornerVector.get(0);
+                        const localY = localCornerVector.get(1);
+                        
+                        // 将本地坐标转换为世界坐标（初始位置）
+                        const worldCornerVector = (shareData.tgfxBaseView as any).localToWorldCoords(localX, localY);
+                        if (worldCornerVector && typeof worldCornerVector.size === 'function' && worldCornerVector.size() >= 2) {
+                            const oppositeCenterX = worldCornerVector.get(0);
+                            const oppositeCenterY = worldCornerVector.get(1);
+                            
+                            console.log(`[缩放] 对角点本地坐标：(${localX.toFixed(2)}, ${localY.toFixed(2)})，世界坐标：(${oppositeCenterX.toFixed(1)}, ${oppositeCenterY.toFixed(1)})`);
+                        
+                            // 取消高亮
+                            shareData.tgfxBaseView?.resetHighlightLayer();
+                            
+                            // 传入本地坐标，在缩放过程中使用
+                            scaleStateManager.startScaling(worldCoords.worldX, worldCoords.worldY, oppositeCenterX, oppositeCenterY, cornerIdx, localX, localY);
+                            
+                            isMouseDown = true;
+                            hasMoved = false;
+                            lastPointX = clientXY.clientX;
+                            lastPointY = clientXY.clientY;
+                            return;
+                        }
+                    }
+                }
+            }
+            
+            // 检测旋转操作 - 只有当光标是旋转类型时才进入旋转模式
             if (cursorType === 'rotate') {
                 console.log('[旋转] 开始旋转操作');
                 
@@ -744,8 +1101,10 @@ export class GestureManager {
                     const centerX = centerVector.get(0);
                     const centerY = centerVector.get(1);
                     
+                    // 取消高亮
+                    shareData.tgfxBaseView?.resetHighlightLayer();
+                    
                     // 转换为世界坐标并开始旋转
-                    const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
                     rotationStateManager.startRotation(worldCoords.worldX, worldCoords.worldY, centerX, centerY);
                     rotationStateManager.setFallbackCenter(centerX, centerY);
                     
@@ -760,6 +1119,7 @@ export class GestureManager {
                 }
             }
 
+            // 默认的选择和移动逻辑
             shareData.tgfxBaseView?.resetHighlightLayer();
             if (shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY)) {
                 lastPointX = clientXY.clientX;
@@ -774,6 +1134,45 @@ export class GestureManager {
 
     public onMouseUp(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
         if (event.button === 0) { // 判断是否为左键
+            // 如果正在缩放，结束缩放状态
+            if (scaleStateManager.isInScaling()) {
+                // 输出缩放结束时的详细信息
+                const cornerIdx = scaleStateManager.getCornerIndex();
+                const cachedCenter = scaleStateManager.getCachedCenter();
+                
+                // 获取当前4个角的坐标
+                const cornersVector = (shareData.tgfxBaseView as any).getSelectedLayerCorners();
+                if (cornersVector && typeof cornersVector.size === 'function' && cornersVector.size() >= 8) {
+                    const corners = [];
+                    for (let i = 0; i < 8; i++) {
+                        corners.push(cornersVector.get(i));
+                    }
+                    
+                    const cornerNames = ['左上角', '右上角', '右下角', '左下角'];
+                    const currentCornerX = corners[cornerIdx * 2];
+                    const currentCornerY = corners[cornerIdx * 2 + 1];
+                    
+                    console.log('=== 缩放结束信息 ===');
+                    console.log(`操作角: ${cornerNames[cornerIdx]} (索引${cornerIdx})`);
+                    console.log(`当前角坐标: (${currentCornerX.toFixed(2)}, ${currentCornerY.toFixed(2)})`);
+                    console.log(`对角点坐标: (${cachedCenter?.x.toFixed(2)}, ${cachedCenter?.y.toFixed(2)})`);
+                    console.log(`所有角坐标:`);
+                    console.log(`  左上角(0): (${corners[0].toFixed(2)}, ${corners[1].toFixed(2)})`);
+                    console.log(`  右上角(1): (${corners[2].toFixed(2)}, ${corners[3].toFixed(2)})`);
+                    console.log(`  右下角(2): (${corners[4].toFixed(2)}, ${corners[5].toFixed(2)})`);
+                    console.log(`  左下角(3): (${corners[6].toFixed(2)}, ${corners[7].toFixed(2)})`);
+                    console.log('==================');
+                }
+                
+                scaleStateManager.endScaling();
+                // 重置状态
+                isMouseDown = false;
+                hasMoved = false;
+                shareData.tgfxBaseView?.markDirty();
+                animationLoop(shareData);
+                return;
+            }
+            
             // 如果正在旋转，结束旋转状态
             if (rotationStateManager.isInRotation()) {
                 console.log('[旋转] 结束旋转操作');

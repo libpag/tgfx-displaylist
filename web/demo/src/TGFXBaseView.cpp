@@ -24,7 +24,6 @@
 #include "tgfx/layers/ShapeLayer.h"
 
 using namespace emscripten;
-//2
 namespace displaylist {
 
 // 默认高亮线宽为 5.0f
@@ -674,6 +673,67 @@ void TGFXBaseView::rotateSelectedLayer(float angle, float worldCenterX, float wo
   appHost->markDirty();
 }
 
+void TGFXBaseView::scaleSelectedLayer(float scaleX, float scaleY, float worldCenterX, float worldCenterY) {
+  if (!selectedTargetLayer) {
+    return;
+  }
+
+  // 将世界坐标的对角点转换为本地坐标
+  tgfx::Point pivotWorld = tgfx::Point::Make(worldCenterX, worldCenterY);
+  tgfx::Point pivotLocal = pivotWorld;
+  
+  // 如果有父层，需要计算父层的全局矩阵
+  auto parentLayer = selectedTargetLayer->parent();
+  tgfx::Matrix parentGlobalMatrix = tgfx::Matrix::I();
+  if (parentLayer) {
+    // 手动计算父层的全局矩阵
+    auto tempLayer = parentLayer;
+    while (tempLayer) {
+      parentGlobalMatrix.preConcat(tempLayer->matrix());
+      tempLayer = tempLayer->parent();
+    }
+  }
+  
+  // 计算从世界坐标到本地坐标的逆矩阵
+  tgfx::Matrix worldToLocal = parentGlobalMatrix;
+  if (!worldToLocal.invert(&worldToLocal)) {
+    printf("[缩放C++] 警告：无法计算逆矩阵，使用本地几何中心\n");
+    const auto localBounds = selectedTargetLayer->getBounds(nullptr, true);
+    pivotLocal = tgfx::Point::Make((localBounds.left + localBounds.right) * 0.5f, 
+                                    (localBounds.top + localBounds.bottom) * 0.5f);
+  } else {
+    // 将世界坐标的对角点转换为本地坐标
+    worldToLocal.mapPoints(&pivotLocal, &pivotWorld, 1);
+  }
+
+  // 在本地坐标系缩放，使用对角点作为枢轴
+  tgfx::Matrix newMatrix = selectedTargetLayer->matrix();
+  newMatrix.preScale(scaleX, scaleY, pivotLocal.x, pivotLocal.y);
+  selectedTargetLayer->setMatrix(newMatrix);
+
+  updateCornerHandles();
+  updateSelectedLineWidth();
+  appHost->markDirty();
+}
+
+void TGFXBaseView::scaleSelectedLayerWithLocalPivot(float scaleX, float scaleY, float localPivotX, float localPivotY) {
+  if (!selectedTargetLayer) {
+    return;
+  }
+
+  printf("[缩放C++] 使用本地枢轴点：(%.2f, %.2f)，缩放因子：(%.4f, %.4f)\\n", 
+         localPivotX, localPivotY, scaleX, scaleY);
+
+  // 直接在本地坐标系缩放，使用本地坐标作为枢轴
+  tgfx::Matrix newMatrix = selectedTargetLayer->matrix();
+  newMatrix.preScale(scaleX, scaleY, localPivotX, localPivotY);
+  selectedTargetLayer->setMatrix(newMatrix);
+
+  updateCornerHandles();
+  updateSelectedLineWidth();
+  appHost->markDirty();
+}
+
 std::vector<float> TGFXBaseView::getSelectedLayerCenter() {
   printf("[旋转C++] getSelectedLayerCenter 被调用\n");
   std::vector<float> center = {0.0f, 0.0f};
@@ -735,6 +795,28 @@ std::vector<std::string> TGFXBaseView::getSelectedLayerInfo() {
   return info;
 }
 
+float TGFXBaseView::getSelectedLayerRotation() {
+  if (!selectedTargetLayer) {
+    return 0.0f;
+  }
+  
+  // 获取图层的全局变换矩阵
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  float rawAngle = std::atan2(globalMatrix.getSkewY(), globalMatrix.getScaleX());
+  
+  float flipScaleX = globalMatrix.getScaleX() < 0 ? -1.0f : 1.0f;
+  float flipScaleY = globalMatrix.getScaleY() < 0 ? -1.0f : 1.0f;
+  float angle = rawAngle;
+  if (flipScaleX * flipScaleY < 0) {
+    angle = -angle;
+  }
+  
+  printf("[旋转角度] 选中图层旋转角度：%.2f 弧度 (%.2f 度)\n", angle, angle * 180.0f / M_PI);
+  
+  return angle;
+}
+
 bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
   if (!appHost) {
     return false;
@@ -747,28 +829,28 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
 
   auto layers = appHost->getLayersUnderPoint(x, y);
   
-  printf("[DEBUG] selectLayerAndCheckRedraw: 检测到 %zu 个图层\n", layers.size());
+  // printf("[DEBUG] selectLayerAndCheckRedraw: 检测到 %zu 个图层\n", layers.size());
   
   // 前置判断：如果点击的是控制图层，需要区分边框和内部
   if (!layers.empty()) {
     const std::string& layerName = layers[0]->name();
-    printf("[DEBUG] selectLayerAndCheckRedraw: 第一个图层名称: '%s'\n", layerName.c_str());
+    // printf("[DEBUG] selectLayerAndCheckRedraw: 第一个图层名称: '%s'\n", layerName.c_str());
     
     if (layerName == "__CORNER_HANDLE__" || layerName == "__SELECTION_BORDER__") {
-      printf("[DEBUG] selectLayerAndCheckRedraw: 检测到控制图层: %s\n", layerName.c_str());
+      // printf("[DEBUG] selectLayerAndCheckRedraw: 检测到控制图层: %s\n", layerName.c_str());
       
       // 对于角控制器，直接返回，不进行穿透（角控制器本身就是操作区域）
       if (layerName == "__CORNER_HANDLE__") {
-        printf("[DEBUG] selectLayerAndCheckRedraw: 点击角控制器，停止检测\n");
+        // printf("[DEBUG] selectLayerAndCheckRedraw: 点击角控制器，停止检测\n");
         return false;
       }
       
       // 对于选择边框，直接穿透到下层图层
       if (layerName == "__SELECTION_BORDER__") {
-        printf("[DEBUG] selectLayerAndCheckRedraw: 检测到选择边框，穿透检测下层图层\n");
+        // printf("[DEBUG] selectLayerAndCheckRedraw: 检测到选择边框，穿透检测下层图层\n");
         // 移除选择边框，继续检测下层图层
         layers.erase(layers.begin());
-        printf("[DEBUG] selectLayerAndCheckRedraw: 移除选择边框后剩余 %zu 个图层\n", layers.size());
+        // printf("[DEBUG] selectLayerAndCheckRedraw: 移除选择边框后剩余 %zu 个图层\n", layers.size());
       }
     }
   }
@@ -1179,6 +1261,100 @@ std::vector<float> TGFXBaseView::getSelectedLayerCorners() {
   return result;
 }
 
+std::vector<float> TGFXBaseView::getCornerHandlePosition(int cornerIndex) {
+  std::vector<float> result;
+  
+  // 验证参数和状态
+  if (cornerIndex < 0 || cornerIndex >= 4) {
+    printf("[角控制器] getCornerHandlePosition 参数无效，索引：%d\n", cornerIndex);
+    return result;
+  }
+  
+  if (cornerHandles.size() != 4) {
+    printf("[角控制器] getCornerHandlePosition 角控制器数量不正确：%zu\n", cornerHandles.size());
+    return result;
+  }
+  
+  auto& handle = cornerHandles[static_cast<size_t>(cornerIndex)];
+  if (!handle) {
+    printf("[角控制器] getCornerHandlePosition 角控制器%d为空\n", cornerIndex);
+    return result;
+  }
+  
+  // 获取角控制器的全局矩阵（已经是世界坐标系）
+  auto matrix = handle->matrix();
+  
+  // 角控制器的中心点就是它的平移分量
+  float worldX = matrix.getTranslateX();
+  float worldY = matrix.getTranslateY();
+  
+  result.push_back(worldX);
+  result.push_back(worldY);
+  
+  printf("[角控制器] getCornerHandlePosition 索引%d，世界坐标：(%.2f, %.2f)\n", 
+         cornerIndex, worldX, worldY);
+  
+  return result;
+}
+
+std::vector<float> TGFXBaseView::getSelectedLayerLocalCorner(int cornerIndex) {
+  std::vector<float> result;
+  
+  if (!selectedTargetLayer) {
+    printf("[本地坐标] getSelectedLayerLocalCorner 没有选中图层\n");
+    return result;
+  }
+  
+  if (cornerIndex < 0 || cornerIndex >= 4) {
+    printf("[本地坐标] getSelectedLayerLocalCorner 参数无效，索引：%d\n", cornerIndex);
+    return result;
+  }
+  
+  // 获取图层的本地边界
+  auto bounds = selectedTargetLayer->getBounds(nullptr, true);
+  
+  // 定义4个角的本地坐标
+  std::vector<tgfx::Point> corners = {
+    tgfx::Point::Make(bounds.left, bounds.top),      // 0: 左上角
+    tgfx::Point::Make(bounds.right, bounds.top),     // 1: 右上角
+    tgfx::Point::Make(bounds.right, bounds.bottom),  // 2: 右下角
+    tgfx::Point::Make(bounds.left, bounds.bottom),   // 3: 左下角
+  };
+  
+  const auto& corner = corners[static_cast<size_t>(cornerIndex)];
+  result.push_back(corner.x);
+  result.push_back(corner.y);
+  
+  printf("[本地坐标] getSelectedLayerLocalCorner 索引%d，本地坐标：(%.2f, %.2f)\n", 
+         cornerIndex, corner.x, corner.y);
+  
+  return result;
+}
+
+std::vector<float> TGFXBaseView::localToWorldCoords(float localX, float localY) {
+  std::vector<float> result;
+  
+  if (!selectedTargetLayer) {
+    printf("[坐标转换] localToWorldCoords 没有选中图层\n");
+    return result;
+  }
+  
+  // 获取图层的全局变换矩阵
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  // 将本地坐标转换为世界坐标
+  tgfx::Point worldPoint;
+  globalMatrix.mapXY(localX, localY, &worldPoint);
+  
+  result.push_back(worldPoint.x);
+  result.push_back(worldPoint.y);
+  
+  printf("[坐标转换] localToWorldCoords 本地(%.2f, %.2f) -> 世界(%.2f, %.2f)\n", 
+         localX, localY, worldPoint.x, worldPoint.y);
+  
+  return result;
+}
+
 void TGFXBaseView::setSelectionLineWidth(float width) {
   if (width > 0.0f) {
     s_highlightLineWidth = width;
@@ -1446,15 +1622,15 @@ bool TGFXBaseView::isPointInSelectedLayer(float x, float y) {
   auto matrix = getLayerGlobalMatrix(selectedTargetLayer);
   auto globalBounds = matrix.mapRect(bounds);
   
-  printf("[DEBUG] isPointInSelectedLayer: 点坐标 (%.2f, %.2f)\n", x, y);
-  printf("[DEBUG] isPointInSelectedLayer: 图层边界 left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n", 
-         bounds.left, bounds.top, bounds.right, bounds.bottom);
-  printf("[DEBUG] isPointInSelectedLayer: 全局边界 left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n", 
-         globalBounds.left, globalBounds.top, globalBounds.right, globalBounds.bottom);
+  // printf("[DEBUG] isPointInSelectedLayer: 点坐标 (%.2f, %.2f)\n", x, y);
+  // printf("[DEBUG] isPointInSelectedLayer: 图层边界 left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n", 
+  //        bounds.left, bounds.top, bounds.right, bounds.bottom);
+  // printf("[DEBUG] isPointInSelectedLayer: 全局边界 left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n", 
+  //        globalBounds.left, globalBounds.top, globalBounds.right, globalBounds.bottom);
   
-  // 检查点是否在选中图层内部
+  // // // 检查点是否在选中图层内部
   bool result = globalBounds.contains(x, y);
-  printf("[DEBUG] isPointInSelectedLayer: 结果 %s\n", result ? "在内部" : "不在内部");
+  // printf("[DEBUG] isPointInSelectedLayer: 结果 %s\n", result ? "在内部" : "不在内部");
   return result;
 }
 
@@ -1627,39 +1803,39 @@ std::shared_ptr<tgfx::Layer> TGFXBaseView::findSharedPtrForLayer(std::shared_ptr
 // 检测点是否在控制图层的边框上
 bool TGFXBaseView::isPointOnControlLayerBorder(float x, float y, std::shared_ptr<tgfx::Layer> controlLayer) {
   if (!controlLayer) {
-    printf("[DEBUG] isPointOnControlLayerBorder: 控制图层为空\n");
+    // printf("[DEBUG] isPointOnControlLayerBorder: 控制图层为空\n");
     return false;
   }
   
   const std::string& layerName = controlLayer->name();
-  printf("[DEBUG] isPointOnControlLayerBorder: 检测控制图层 '%s' 在点 (%.2f, %.2f)\n", layerName.c_str(), x, y);
+  // printf("[DEBUG] isPointOnControlLayerBorder: 检测控制图层 '%s' 在点 (%.2f, %.2f)\n", layerName.c_str(), x, y);
   
   // 对于角控制器，整个区域都算边框（因为角控制器本身就是用来操作的）
   if (layerName == "__CORNER_HANDLE__") {
-    printf("[DEBUG] isPointOnControlLayerBorder: 角控制器，返回 true\n");
+    // printf("[DEBUG] isPointOnControlLayerBorder: 角控制器，返回 true\n");
     return true;
   }
   
   // 对于选择边框，使用简化的检测逻辑
   // 参考旋转功能的实现：如果有选中图层，检查是否在选中图层内部
   if (layerName == "__SELECTION_BORDER__") {
-    printf("[DEBUG] isPointOnControlLayerBorder: 选择边框检测\n");
+    // printf("[DEBUG] isPointOnControlLayerBorder: 选择边框检测\n");
     // 如果有选中的图层，检查点是否在选中图层内部
     if (selectedTargetLayer) {
       // 使用现有的 isPointInSelectedLayer 方法检测
       bool isInSelectedLayer = isPointInSelectedLayer(x, y);
-      printf("[DEBUG] isPointOnControlLayerBorder: 点在选中图层内部: %s\n", isInSelectedLayer ? "是" : "否");
+      // printf("[DEBUG] isPointOnControlLayerBorder: 点在选中图层内部: %s\n", isInSelectedLayer ? "是" : "否");
       // 如果在选中图层内部，说明不在边框上（类似旋转功能的逻辑）
       bool result = !isInSelectedLayer;
-      printf("[DEBUG] isPointOnControlLayerBorder: 选择边框结果: %s\n", result ? "在边框上" : "在内部");
+      // printf("[DEBUG] isPointOnControlLayerBorder: 选择边框结果: %s\n", result ? "在边框上" : "在内部");
       return result;
     }
     // 如果没有选中图层，默认认为在边框上
-    printf("[DEBUG] isPointOnControlLayerBorder: 没有选中图层，默认在边框上\n");
+    // printf("[DEBUG] isPointOnControlLayerBorder: 没有选中图层，默认在边框上\n");
     return true;
   }
   
-  printf("[DEBUG] isPointOnControlLayerBorder: 未知控制图层类型，返回 false\n");
+  // printf("[DEBUG] isPointOnControlLayerBorder: 未知控制图层类型，返回 false\n");
   return false;
 }
 

@@ -44,8 +44,11 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("selectMoveLayer", &TGFXBaseView::selectMoveLayer)
       .function("moveHighlightLayer", &TGFXBaseView::moveHighlightLayer)
       .function("rotateSelectedLayer", &TGFXBaseView::rotateSelectedLayer)
+      .function("scaleSelectedLayer", &TGFXBaseView::scaleSelectedLayer)
+      .function("scaleSelectedLayerWithLocalPivot", &TGFXBaseView::scaleSelectedLayerWithLocalPivot)
       .function("getSelectedLayerCenter", &TGFXBaseView::getSelectedLayerCenter)
       .function("getSelectedLayerInfo", &TGFXBaseView::getSelectedLayerInfo)
+      .function("getSelectedLayerRotation", &TGFXBaseView::getSelectedLayerRotation)
       .function("getMoveLayerPosition", &TGFXBaseView::getMoveLayerPosition)
       .function("getMoveLayerGlobalMatrix", &TGFXBaseView::getMoveLayerGlobalMatrix)
       .function("selectLayerAndCheckRedraw", &TGFXBaseView::selectLayerAndCheckRedraw)
@@ -68,6 +71,9 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("isPointInSelectedLayer", &TGFXBaseView::isPointInSelectedLayer)
       .function("isPointInSelectionBorder", &TGFXBaseView::isPointInSelectionBorder)
       .function("getSelectedLayerCorners", &TGFXBaseView::getSelectedLayerCorners)
+      .function("getCornerHandlePosition", &TGFXBaseView::getCornerHandlePosition)
+      .function("getSelectedLayerLocalCorner", &TGFXBaseView::getSelectedLayerLocalCorner)
+      .function("localToWorldCoords", &TGFXBaseView::localToWorldCoords)
       
       ;
 
