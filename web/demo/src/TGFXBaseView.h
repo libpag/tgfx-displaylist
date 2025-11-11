@@ -58,6 +58,7 @@ class TGFXBaseView {
 
   // 旋转操作相关方法
   void rotateSelectedLayer(float angle, float worldCenterX, float worldCenterY);
+  void endRotation(); // 标记旋转结束
   std::vector<float> getSelectedLayerCenter();
   
   // 缩放操作相关方法
@@ -108,6 +109,36 @@ class TGFXBaseView {
   // 参数：localX, localY - 本地坐标
   // 返回数组: [worldX, worldY]，如果没有选中图层则返回空数组
   std::vector<float> localToWorldCoords(float localX, float localY);
+  
+  // 获取考虑翻转状态的实际角名称
+  // 参数：originalCornerIndex - 原始角索引 (0=左上, 1=右上, 2=右下, 3=左下)
+  // 返回：考虑翻转后的实际角名称字符串
+  std::string getActualCornerName(int originalCornerIndex);
+  
+  // 根据世界坐标位置判断角的名称
+  // 参数：cornerIndex - 角的索引 (0-3)
+  // 返回：基于实际坐标位置的角名称
+  std::string getCornerNameByPosition(int cornerIndex);
+  
+  // 获取角的详细信息（包含翻转状态分析）
+  // 返回格式：["角索引", "原始名称", "实际名称", "世界坐标X", "世界坐标Y", "翻转状态"]
+  std::vector<std::string> getCornerDetailInfo();
+  
+  // 调试方法：打印当前翻转状态和角映射关系
+  void debugFlipStatus();
+  
+  // 获取考虑翻转状态的对角点索引
+  // 参数：cornerIndex - 当前角的索引
+  // 返回：对角点的索引，如果无效则返回-1
+  int getOppositeCornerIndex(int cornerIndex);
+  
+  // 获取指定角的对角点世界坐标
+  // 参数：cornerIndex - 当前角的索引
+  // 返回：[worldX, worldY]，如果无效则返回空数组
+  std::vector<float> getOppositeCornerWorldCoords(int cornerIndex);
+  
+  // 调试方法：打印所有角和对角点的详细信息
+  void debugCornerAndOppositeInfo();
   
   // 旋转区域检测
   bool isPointInRotateZone(float x, float y);

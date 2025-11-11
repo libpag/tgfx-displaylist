@@ -44,6 +44,7 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("selectMoveLayer", &TGFXBaseView::selectMoveLayer)
       .function("moveHighlightLayer", &TGFXBaseView::moveHighlightLayer)
       .function("rotateSelectedLayer", &TGFXBaseView::rotateSelectedLayer)
+      .function("endRotation", &TGFXBaseView::endRotation)
       .function("scaleSelectedLayer", &TGFXBaseView::scaleSelectedLayer)
       .function("scaleSelectedLayerWithLocalPivot", &TGFXBaseView::scaleSelectedLayerWithLocalPivot)
       .function("getSelectedLayerCenter", &TGFXBaseView::getSelectedLayerCenter)
@@ -74,6 +75,13 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("getCornerHandlePosition", &TGFXBaseView::getCornerHandlePosition)
       .function("getSelectedLayerLocalCorner", &TGFXBaseView::getSelectedLayerLocalCorner)
       .function("localToWorldCoords", &TGFXBaseView::localToWorldCoords)
+      .function("getActualCornerName", &TGFXBaseView::getActualCornerName)
+      .function("getCornerNameByPosition", &TGFXBaseView::getCornerNameByPosition)
+      .function("getCornerDetailInfo", &TGFXBaseView::getCornerDetailInfo)
+      .function("debugFlipStatus", &TGFXBaseView::debugFlipStatus)
+      .function("getOppositeCornerIndex", &TGFXBaseView::getOppositeCornerIndex)
+      .function("getOppositeCornerWorldCoords", &TGFXBaseView::getOppositeCornerWorldCoords)
+      .function("debugCornerAndOppositeInfo", &TGFXBaseView::debugCornerAndOppositeInfo)
       
       ;
 

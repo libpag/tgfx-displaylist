@@ -23,6 +23,7 @@
 #include "tgfx/layers/TextLayer.h"
 #include "tgfx/layers/ShapeLayer.h"
 
+
 using namespace emscripten;
 namespace displaylist {
 
@@ -187,24 +188,11 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
     latestSelectedLayer = selectionBorder;
     
     // 重新创建角控制器
-    const std::string& selectedLayerName = selectedTargetLayer->name();
-    auto selectedLayerType = selectedTargetLayer->type();
-    const char* typeStr = "Unknown";
-    switch(selectedLayerType) {
-      case tgfx::LayerType::Image: typeStr = "Image"; break;
-      case tgfx::LayerType::Text: typeStr = "Text"; break;
-      case tgfx::LayerType::Shape: typeStr = "Shape"; break;
-      case tgfx::LayerType::Solid: typeStr = "Solid"; break;
-      case tgfx::LayerType::Layer: typeStr = "Layer"; break;
-    }
-    printf("[角控制器] 来源：draw方法（画布大小变化），目标图层：'%s'(类型:%s)\n", 
-           selectedLayerName.c_str(), typeStr);
     createCornerHandles(selectedTargetLayer);
     if (rootLayer) {
       for (auto handle : cornerHandles) {
         rootLayer->addChild(handle);
       }
-      printf("[角控制器] draw方法已将 %zu 个角控制器添加到根图层\n", cornerHandles.size());
     }
   }
 
@@ -485,24 +473,11 @@ bool TGFXBaseView::resetMoveLayers() {
     // 角控制器基于 selectedTargetLayer 的原始边界与最新矩阵
     removeCornerHandles();
     if (selectedTargetLayer) {
-      const std::string& selectedLayerName = selectedTargetLayer->name();
-      auto selectedLayerType = selectedTargetLayer->type();
-      const char* typeStr = "Unknown";
-      switch(selectedLayerType) {
-        case tgfx::LayerType::Image: typeStr = "Image"; break;
-        case tgfx::LayerType::Text: typeStr = "Text"; break;
-        case tgfx::LayerType::Shape: typeStr = "Shape"; break;
-        case tgfx::LayerType::Solid: typeStr = "Solid"; break;
-        case tgfx::LayerType::Layer: typeStr = "Layer"; break;
-      }
-      printf("[角控制器] 来源：resetMoveLayers（移动结束），目标图层：'%s'(类型:%s)\n", 
-             selectedLayerName.c_str(), typeStr);
       createCornerHandles(selectedTargetLayer);
     }
     for (auto& handle : cornerHandles) {
       handle->setVisible(true);
     }
-    printf("[角控制器] resetMoveLayers 设置 %zu 个角控制器可见\n", cornerHandles.size());
 
     // 同步更新选中线宽，保证丝滑
     updateSelectedLineWidth();
@@ -630,47 +605,168 @@ std::vector<float> TGFXBaseView::getMoveLayerGlobalMatrix() {
   return matrixInfo;
 }
 
-void TGFXBaseView::rotateSelectedLayer(float angle, float worldCenterX, float worldCenterY) {
+// 旋转状态控制变量
+static bool isRotationStart = true;
+static int rotationCount = 0;
+
+void TGFXBaseView::rotateSelectedLayer(float angle, float /*worldCenterX*/, float /*worldCenterY*/) {
   if (!selectedTargetLayer) {
     return;
   }
 
-  static int rotationCount = 0;
   rotationCount++;
 
   const float angleDegrees = angle * 180.0f / static_cast<float>(M_PI);
-  printf("[旋转C++] 第%d次旋转 - 图层:'%s', 增量角度:%.4f°, 请求中心:(%.2f, %.2f)\n",
-         rotationCount, selectedTargetLayer->name().c_str(), angleDegrees, worldCenterX, worldCenterY);
+  
+  // 只在开始旋转时输出详细信息
+  if (isRotationStart) {
+    printf("\n=== 旋转操作开始 ===\n");
+    printf("[旋转] 图层: '%s'\n", selectedTargetLayer->name().c_str());
+    
+    // 获取当前总角度
+    float currentRotation = getSelectedLayerRotation();
+    float currentDegrees = currentRotation * 180.0f / static_cast<float>(M_PI);
+    printf("[旋转] 当前角度: %.2f° (%.4f弧度)\n", currentDegrees, currentRotation);
+    
+    // 获取四个角坐标
+    const auto localBounds = selectedTargetLayer->getBounds(nullptr, true);
+    auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+    
+    std::vector<tgfx::Point> corners = {
+      tgfx::Point::Make(localBounds.left, localBounds.top),     // 左上角
+      tgfx::Point::Make(localBounds.right, localBounds.top),    // 右上角  
+      tgfx::Point::Make(localBounds.right, localBounds.bottom), // 右下角
+      tgfx::Point::Make(localBounds.left, localBounds.bottom),  // 左下角
+    };
+    
+    printf("[旋转] 四个角坐标 (考虑翻转状态):\n");
+    const char* originalNames[] = {"左上角", "右上角", "右下角", "左下角"};
+    for (size_t i = 0; i < corners.size(); ++i) {
+      tgfx::Point worldPoint;
+      globalMatrix.mapXY(corners[i].x, corners[i].y, &worldPoint);
+      std::string actualCornerName = getActualCornerName(static_cast<int>(i));
+      
+      // 如果实际名称与原始名称不同，显示映射关系
+      if (actualCornerName != originalNames[i]) {
+        printf("  索引%zu: %s -> %s: 世界(%.2f, %.2f)\n", 
+               i, originalNames[i], actualCornerName.c_str(), worldPoint.x, worldPoint.y);
+      } else {
+        printf("  索引%zu: %s: 世界(%.2f, %.2f)\n", 
+               i, actualCornerName.c_str(), worldPoint.x, worldPoint.y);
+      }
+    }
+    
+    // 添加基于坐标位置的重新判断
+    printf("[旋转] 基于坐标位置重新判断角名称:\n");
+    for (size_t i = 0; i < corners.size(); ++i) {
+      tgfx::Point worldPoint;
+      globalMatrix.mapXY(corners[i].x, corners[i].y, &worldPoint);
+      std::string positionBasedName = getCornerNameByPosition(static_cast<int>(i));
+      printf("  %s(%zu): (%.2f, %.2f)\n", 
+             positionBasedName.c_str(), i, worldPoint.x, worldPoint.y);
+    }
+    
+    // 计算对角线
+    tgfx::Point worldCorners[4];
+    for (size_t i = 0; i < 4; ++i) {
+      globalMatrix.mapXY(corners[i].x, corners[i].y, &worldCorners[i]);
+    }
+    printf("[旋转] 对角线:\n");
+    printf("  对角线1: 左上(%.2f, %.2f) <-> 右下(%.2f, %.2f)\n", 
+           worldCorners[0].x, worldCorners[0].y, worldCorners[2].x, worldCorners[2].y);
+    printf("  对角线2: 右上(%.2f, %.2f) <-> 左下(%.2f, %.2f)\n", 
+           worldCorners[1].x, worldCorners[1].y, worldCorners[3].x, worldCorners[3].y);
+    
+    // 检测翻转状态
+    float scaleX = globalMatrix.getScaleX();
+    float scaleY = globalMatrix.getScaleY();
+    bool isFlippedX = scaleX < 0;
+    bool isFlippedY = scaleY < 0;
+    printf("[旋转] 翻转状态: X轴%s, Y轴%s\n", 
+           isFlippedX ? "翻转" : "正常", isFlippedY ? "翻转" : "正常");
+    
+    isRotationStart = false;
+  }
 
   // 获取本地几何中心
   const auto localBounds = selectedTargetLayer->getBounds(nullptr, true);
   const tgfx::Point pivotLocal =
       tgfx::Point::Make((localBounds.left + localBounds.right) * 0.5f, 
                         (localBounds.top + localBounds.bottom) * 0.5f);
-  
-  printf("[旋转C++] 本地边界: left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n",
-         localBounds.left, localBounds.top, localBounds.right, localBounds.bottom);
-  printf("[旋转C++] 本地枢轴: (%.2f, %.2f)\n", pivotLocal.x, pivotLocal.y);
-
-  // 记录旋转前的世界坐标（用于验证）
-  auto root = selectedTargetLayer->root();
-  auto worldBoundsBefore = selectedTargetLayer->getBounds(root, true);
-  printf("[旋转C++] 旋转前世界边界中心: (%.2f, %.2f)\n", 
-         worldBoundsBefore.centerX(), worldBoundsBefore.centerY());
 
   // 直接在本地坐标系旋转，使用Matrix的preRotate(degrees, px, py)
   tgfx::Matrix newMatrix = selectedTargetLayer->matrix();
   newMatrix.preRotate(angleDegrees, pivotLocal.x, pivotLocal.y);
   selectedTargetLayer->setMatrix(newMatrix);
 
-  // 验证旋转后的世界坐标
-  auto worldBoundsAfter = selectedTargetLayer->getBounds(root, true);
-  printf("[旋转C++] 旋转后世界边界中心: (%.2f, %.2f)\n", 
-         worldBoundsAfter.centerX(), worldBoundsAfter.centerY());
-
   updateCornerHandles();
   updateSelectedLineWidth();
   appHost->markDirty();
+}
+
+void TGFXBaseView::endRotation() {
+  if (!selectedTargetLayer) {
+    return;
+  }
+  
+  // 重置旋转开始标志，以便下次旋转时重新输出开始信息
+  isRotationStart = true;
+  rotationCount = 0;
+  
+  printf("\n=== 旋转操作结束 ===\n");
+  
+  // 输出最终状态
+  float finalRotation = getSelectedLayerRotation();
+  float finalDegrees = finalRotation * 180.0f / static_cast<float>(M_PI);
+  printf("[旋转] 最终角度: %.2f° (%.4f弧度)\n", finalDegrees, finalRotation);
+  
+  // 获取最终四个角坐标
+  const auto localBounds = selectedTargetLayer->getBounds(nullptr, true);
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  std::vector<tgfx::Point> corners = {
+    tgfx::Point::Make(localBounds.left, localBounds.top),
+    tgfx::Point::Make(localBounds.right, localBounds.top),
+    tgfx::Point::Make(localBounds.right, localBounds.bottom),
+    tgfx::Point::Make(localBounds.left, localBounds.bottom),
+  };
+  
+  printf("[旋转] 最终四个角坐标 (考虑翻转状态):\n");
+  const char* originalNames[] = {"左上角", "右上角", "右下角", "左下角"};
+  for (size_t i = 0; i < corners.size(); ++i) {
+    tgfx::Point worldPoint;
+    globalMatrix.mapXY(corners[i].x, corners[i].y, &worldPoint);
+    std::string actualCornerName = getActualCornerName(static_cast<int>(i));
+    
+    // 如果实际名称与原始名称不同，显示映射关系
+    if (actualCornerName != originalNames[i]) {
+      printf("  索引%zu: %s -> %s: 世界(%.2f, %.2f)\n", 
+             i, originalNames[i], actualCornerName.c_str(), worldPoint.x, worldPoint.y);
+    } else {
+      printf("  索引%zu: %s: 世界(%.2f, %.2f)\n", 
+             i, actualCornerName.c_str(), worldPoint.x, worldPoint.y);
+    }
+  }
+  
+  // 计算最终对角线
+  tgfx::Point worldCorners[4];
+  for (size_t i = 0; i < 4; ++i) {
+    globalMatrix.mapXY(corners[i].x, corners[i].y, &worldCorners[i]);
+  }
+  printf("[旋转] 最终对角线:\n");
+  printf("  对角线1: 左上(%.2f, %.2f) <-> 右下(%.2f, %.2f)\n", 
+         worldCorners[0].x, worldCorners[0].y, worldCorners[2].x, worldCorners[2].y);
+  printf("  对角线2: 右上(%.2f, %.2f) <-> 左下(%.2f, %.2f)\n", 
+         worldCorners[1].x, worldCorners[1].y, worldCorners[3].x, worldCorners[3].y);
+  
+  // 检测最终翻转状态
+  float scaleX = globalMatrix.getScaleX();
+  float scaleY = globalMatrix.getScaleY();
+  bool isFlippedX = scaleX < 0;
+  bool isFlippedY = scaleY < 0;
+  printf("[旋转] 最终翻转状态: X轴%s, Y轴%s\n", 
+         isFlippedX ? "翻转" : "正常", isFlippedY ? "翻转" : "正常");
+  
+  printf("===================\n\n");
 }
 
 void TGFXBaseView::scaleSelectedLayer(float scaleX, float scaleY, float worldCenterX, float worldCenterY) {
@@ -829,7 +925,10 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
 
   auto layers = appHost->getLayersUnderPoint(x, y);
   
-  // printf("[DEBUG] selectLayerAndCheckRedraw: 检测到 %zu 个图层\n", layers.size());
+  printf("[选中调试] 检测到 %zu 个图层，坐标(%.2f, %.2f)\n", layers.size(), x, y);
+  for (size_t i = 0; i < layers.size(); i++) {
+    printf("[选中调试]   图层%zu: %s\n", i, layers[i]->name().c_str());
+  }
   
   // 前置判断：如果点击的是控制图层，需要区分边框和内部
   if (!layers.empty()) {
@@ -871,6 +970,7 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
     
     // 选择第一个（最顶层的）非控制图层且非当前选中的图层
     bestLayer = layer;
+    printf("[选中调试] 找到新图层: %s\n", layer->name().c_str());
     break;
   }
   
@@ -882,6 +982,7 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
         continue;
       }
       if (layer == selectedTargetLayer) {
+        printf("[选中调试] 点击了已选中的图层: %s，保持选中状态\n", layer->name().c_str());
         appHost->markDirty();
         return true;
       }
@@ -889,6 +990,7 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
   }
   
   if (bestLayer) {
+    printf("[选中调试] 选中新图层: %s\n", bestLayer->name().c_str());
 
     // 先清理旧的选择框
     resetSelectedLayer();
@@ -932,18 +1034,6 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
     selectedTargetLayer = bestLayer;
 
     // 创建四个角控制器
-    const std::string& bestLayerName = bestLayer->name();
-    auto bestLayerType = bestLayer->type();
-    const char* typeStr = "Unknown";
-    switch(bestLayerType) {
-      case tgfx::LayerType::Image: typeStr = "Image"; break;
-      case tgfx::LayerType::Text: typeStr = "Text"; break;
-      case tgfx::LayerType::Shape: typeStr = "Shape"; break;
-      case tgfx::LayerType::Solid: typeStr = "Solid"; break;
-      case tgfx::LayerType::Layer: typeStr = "Layer"; break;
-    }
-    printf("[角控制器] 来源：selectLayerAndCheckRedraw，目标图层：'%s'(类型:%s)\n", 
-           bestLayerName.c_str(), typeStr);
     createCornerHandles(bestLayer);
 
     // 添加角控制器到根图层
@@ -951,7 +1041,6 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
       for (auto handle : cornerHandles) {
         rootLayer->addChild(handle);
       }
-      printf("[角控制器] selectLayerAndCheckRedraw 已将 %zu 个角控制器添加到根图层\n", cornerHandles.size());
     }
 
   } else {
@@ -970,7 +1059,6 @@ bool TGFXBaseView::resetSelectedLayer() {
   
   // 1. 移除角控制器（先处理子元素）
   if (!cornerHandles.empty()) {
-    printf("[角控制器] resetSelectedLayer 中移除角控制器\n");
     removeCornerHandles();
     hasChanges = true;
   }
@@ -1007,34 +1095,13 @@ bool TGFXBaseView::resetSelectedLayer() {
 
 void TGFXBaseView::createCornerHandles(std::shared_ptr<tgfx::Layer> layer) {
   if (!layer || !appHost) {
-    printf("[角控制器] createCornerHandles 参数无效，退出\n");
     return;
   }
   
   // 验证图层是否仍在图层树中
   if (!layer->parent() && layer.get() != appHost->displayList.root()) {
-    printf("[角控制器] 目标图层已从图层树中移除，无法创建角控制器\n");
     return;
   }
-  
-  const std::string& layerName = layer->name();
-  auto layerType = layer->type();
-  const char* typeStr = "Unknown";
-  switch(layerType) {
-    case tgfx::LayerType::Image: typeStr = "Image"; break;
-    case tgfx::LayerType::Text: typeStr = "Text"; break;
-    case tgfx::LayerType::Shape: typeStr = "Shape"; break;
-    case tgfx::LayerType::Solid: typeStr = "Solid"; break;
-    case tgfx::LayerType::Layer: typeStr = "Layer"; break;
-  }
-  
-  // 获取图层的全局变换矩阵和位置信息
-  auto layerMatrix = layer->matrix();
-  printf("[角控制器] createCornerHandles 为图层 '%s'(类型:%s) 创建角控制器\n", 
-         layerName.c_str(), typeStr);
-  printf("[角控制器] 目标图层矩阵：[%.2f, %.2f, %.2f, %.2f, %.2f, %.2f]\n",
-         layerMatrix.getScaleX(), layerMatrix.getSkewY(), layerMatrix.getSkewX(), 
-         layerMatrix.getScaleY(), layerMatrix.getTranslateX(), layerMatrix.getTranslateY());
   
   // 清除之前的角控制器
   removeCornerHandles();
@@ -1066,9 +1133,6 @@ void TGFXBaseView::createCornerHandles(std::shared_ptr<tgfx::Layer> layer) {
     tgfx::Point::Make(b.right, b.bottom),
     tgfx::Point::Make(b.left,  b.bottom),
   };
-
-  printf("[角控制器] 开始创建4个角控制器，边界：left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n", 
-         b.left, b.top, b.right, b.bottom);
   
   for (size_t i = 0; i < corners.size(); ++i) {
     const auto& c = corners[i];
@@ -1087,26 +1151,14 @@ void TGFXBaseView::createCornerHandles(std::shared_ptr<tgfx::Layer> layer) {
     
     // 设置角控制器名称标识
     handle->setName("__CORNER_HANDLE__");
-    // TODO: 完成旋转区域检测，为旋转功能做准备
 
     rootLayer->addChild(handle);
     // 将 ShapeLayer 转换为 Layer 存储在 cornerHandles 中
     cornerHandles.push_back(std::static_pointer_cast<tgfx::Layer>(handle));
-    
-    // 获取变换矩阵的详细信息
-    auto matrix = handle->matrix();
-    printf("[角控制器] 创建第%zu个角控制器，位置：(%.2f, %.2f)，大小：%.2f，矩阵：[%.2f, %.2f, %.2f, %.2f, %.2f, %.2f]\n", 
-           i+1, c.x, c.y, handleSize, 
-           matrix.getScaleX(), matrix.getSkewY(), matrix.getSkewX(), 
-           matrix.getScaleY(), matrix.getTranslateX(), matrix.getTranslateY());
   }
-  
-  printf("[角控制器] 创建完成，cornerHandles数组大小：%zu\n", cornerHandles.size());
 }
 
 void TGFXBaseView::removeCornerHandles() {
-  printf("[角控制器] removeCornerHandles 开始清理 %zu 个角控制器\n", cornerHandles.size());
-  
   // 先从父节点移除，再清理引用
   for (auto& handle : cornerHandles) {
     if (handle) {
@@ -1122,8 +1174,6 @@ void TGFXBaseView::removeCornerHandles() {
   // 清空容器并释放内存
   cornerHandles.clear();
   cornerHandles.shrink_to_fit();
-  
-  printf("[角控制器] 清理完成，容器已清空并释放内存\n");
 }
 
 void TGFXBaseView::updateCornerHandles() {
@@ -1131,8 +1181,6 @@ void TGFXBaseView::updateCornerHandles() {
   if (!appHost || !selectedTargetLayer || isMoving) {
     return;
   }
-  
-  // 只在重建时输出日志，避免频繁更新现有角控制器时的日志噪音
 
   // 依据当前缩放与矩阵计算线宽与大小
   auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
@@ -1157,7 +1205,7 @@ void TGFXBaseView::updateCornerHandles() {
 
   // 若已有 4 个角控制器，则只更新其几何与线宽以实现丝滑；否则重建一次
   if (cornerHandles.size() == 4) {
-    // 静默更新现有角控制器，不输出日志避免噪音
+    // 静默更新现有角控制器
     for (size_t i = 0; i < 4; ++i) {
       auto& handle = cornerHandles[i];
       if (!handle) {
@@ -1175,19 +1223,7 @@ void TGFXBaseView::updateCornerHandles() {
       handle->setVisible(true);
     }
   } else {
-    // 只在重建时输出日志
-    const std::string& targetLayerName = selectedTargetLayer->name();
-    auto targetLayerType = selectedTargetLayer->type();
-    const char* typeStr = "Unknown";
-    switch(targetLayerType) {
-      case tgfx::LayerType::Image: typeStr = "Image"; break;
-      case tgfx::LayerType::Text: typeStr = "Text"; break;
-      case tgfx::LayerType::Shape: typeStr = "Shape"; break;
-      case tgfx::LayerType::Solid: typeStr = "Solid"; break;
-      case tgfx::LayerType::Layer: typeStr = "Layer"; break;
-    }
-    printf("[角控制器] updateCornerHandles 重建角控制器，目标图层：'%s'(类型:%s)，当前数量：%zu\n", 
-           targetLayerName.c_str(), typeStr, cornerHandles.size());
+    // 重建角控制器（减少日志输出）
     removeCornerHandles();
     createCornerHandles(selectedTargetLayer);
   }
@@ -1291,9 +1327,6 @@ std::vector<float> TGFXBaseView::getCornerHandlePosition(int cornerIndex) {
   result.push_back(worldX);
   result.push_back(worldY);
   
-  printf("[角控制器] getCornerHandlePosition 索引%d，世界坐标：(%.2f, %.2f)\n", 
-         cornerIndex, worldX, worldY);
-  
   return result;
 }
 
@@ -1353,6 +1386,331 @@ std::vector<float> TGFXBaseView::localToWorldCoords(float localX, float localY) 
          localX, localY, worldPoint.x, worldPoint.y);
   
   return result;
+}
+
+std::string TGFXBaseView::getActualCornerName(int originalCornerIndex) {
+  if (!selectedTargetLayer || originalCornerIndex < 0 || originalCornerIndex >= 4) {
+    return "未知角";
+  }
+  
+  // 获取全局变换矩阵
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  // 检测翻转状态
+  float scaleX = globalMatrix.getScaleX();
+  float scaleY = globalMatrix.getScaleY();
+  bool isFlippedX = scaleX < 0;
+  bool isFlippedY = scaleY < 0;
+  
+  // 原始角名称映射 (0=左上, 1=右上, 2=右下, 3=左下)
+  const char* originalNames[] = {"左上角", "右上角", "右下角", "左下角"};
+  
+  // 根据翻转状态调整角的索引
+  int actualIndex = originalCornerIndex;
+  
+  if (isFlippedX && !isFlippedY) {
+    // 只有X轴翻转：左右互换
+    switch (originalCornerIndex) {
+      case 0: actualIndex = 1; break; // 左上 -> 右上
+      case 1: actualIndex = 0; break; // 右上 -> 左上
+      case 2: actualIndex = 3; break; // 右下 -> 左下
+      case 3: actualIndex = 2; break; // 左下 -> 右下
+    }
+  } else if (!isFlippedX && isFlippedY) {
+    // 只有Y轴翻转：上下互换
+    switch (originalCornerIndex) {
+      case 0: actualIndex = 3; break; // 左上 -> 左下
+      case 1: actualIndex = 2; break; // 右上 -> 右下
+      case 2: actualIndex = 1; break; // 右下 -> 右上
+      case 3: actualIndex = 0; break; // 左下 -> 左上
+    }
+  } else if (isFlippedX && isFlippedY) {
+    // 两轴都翻转：对角互换
+    switch (originalCornerIndex) {
+      case 0: actualIndex = 2; break; // 左上 -> 右下
+      case 1: actualIndex = 3; break; // 右上 -> 左下
+      case 2: actualIndex = 0; break; // 右下 -> 左上
+      case 3: actualIndex = 1; break; // 左下 -> 右上
+    }
+  }
+  // 如果没有翻转，actualIndex 保持原值
+  
+  return std::string(originalNames[actualIndex]);
+}
+
+std::string TGFXBaseView::getCornerNameByPosition(int cornerIndex) {
+  if (!selectedTargetLayer || cornerIndex < 0 || cornerIndex >= 4) {
+    return "未知角";
+  }
+  
+  // 获取全局变换矩阵
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  // 获取所有角的世界坐标
+  const auto localBounds = selectedTargetLayer->getBounds(nullptr, true);
+  std::vector<tgfx::Point> corners = {
+    tgfx::Point::Make(localBounds.left, localBounds.top),    // 0: 原始左上
+    tgfx::Point::Make(localBounds.right, localBounds.top),   // 1: 原始右上
+    tgfx::Point::Make(localBounds.right, localBounds.bottom), // 2: 原始右下
+    tgfx::Point::Make(localBounds.left, localBounds.bottom),  // 3: 原始左下
+  };
+  
+  // 转换所有角到世界坐标
+  std::vector<tgfx::Point> worldCorners(4);
+  for (size_t i = 0; i < 4; ++i) {
+    globalMatrix.mapXY(corners[i].x, corners[i].y, &worldCorners[i]);
+  }
+  
+  // 获取当前角的世界坐标
+  tgfx::Point currentCorner = worldCorners[static_cast<size_t>(cornerIndex)];
+  
+  // 找到最左、最右、最上、最下的坐标值
+  float minX = worldCorners[0].x, maxX = worldCorners[0].x;
+  float minY = worldCorners[0].y, maxY = worldCorners[0].y;
+  
+  for (size_t i = 1; i < 4; ++i) {
+    minX = std::min(minX, worldCorners[i].x);
+    maxX = std::max(maxX, worldCorners[i].x);
+    minY = std::min(minY, worldCorners[i].y);
+    maxY = std::max(maxY, worldCorners[i].y);
+  }
+  
+  // 根据当前角的位置判断它在哪个象限
+  bool isLeft = std::abs(currentCorner.x - minX) < std::abs(currentCorner.x - maxX);
+  bool isTop = std::abs(currentCorner.y - minY) < std::abs(currentCorner.y - maxY);
+  
+  // 根据位置返回角名称
+  if (isLeft && isTop) {
+    return "左上角";
+  } else if (!isLeft && isTop) {
+    return "右上角";
+  } else if (!isLeft && !isTop) {
+    return "右下角";
+  } else {
+    return "左下角";
+  }
+}
+
+std::vector<std::string> TGFXBaseView::getCornerDetailInfo() {
+  std::vector<std::string> result;
+  
+  if (!selectedTargetLayer) {
+    return result;
+  }
+  
+  // 获取全局变换矩阵
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  // 检测翻转状态
+  float scaleX = globalMatrix.getScaleX();
+  float scaleY = globalMatrix.getScaleY();
+  bool isFlippedX = scaleX < 0;
+  bool isFlippedY = scaleY < 0;
+  
+  // 构建翻转状态字符串
+  std::string flipStatus = "X轴" + std::string(isFlippedX ? "翻转" : "正常") + 
+                          ",Y轴" + std::string(isFlippedY ? "翻转" : "正常");
+  
+  // 获取角坐标
+  const auto localBounds = selectedTargetLayer->getBounds(nullptr, true);
+  std::vector<tgfx::Point> corners = {
+    tgfx::Point::Make(localBounds.left, localBounds.top),
+    tgfx::Point::Make(localBounds.right, localBounds.top),
+    tgfx::Point::Make(localBounds.right, localBounds.bottom),
+    tgfx::Point::Make(localBounds.left, localBounds.bottom),
+  };
+  
+  const char* originalNames[] = {"左上角", "右上角", "右下角", "左下角"};
+  
+  // 为每个角生成详细信息
+  for (size_t i = 0; i < 4; ++i) {
+    tgfx::Point worldPoint;
+    globalMatrix.mapXY(corners[i].x, corners[i].y, &worldPoint);
+    
+    std::string actualName = getActualCornerName(static_cast<int>(i));
+    
+    // 格式：索引|原始名称|实际名称|世界X|世界Y|翻转状态
+    std::string info = std::to_string(i) + "|" + 
+                      originalNames[i] + "|" + 
+                      actualName + "|" + 
+                      std::to_string(worldPoint.x) + "|" + 
+                      std::to_string(worldPoint.y) + "|" + 
+                      flipStatus;
+    result.push_back(info);
+  }
+  
+  return result;
+}
+
+void TGFXBaseView::debugFlipStatus() {
+  if (!selectedTargetLayer) {
+    printf("[调试] 没有选中的图层\n");
+    return;
+  }
+  
+  // 获取全局变换矩阵
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  // 检测翻转状态
+  float scaleX = globalMatrix.getScaleX();
+  float scaleY = globalMatrix.getScaleY();
+  bool isFlippedX = scaleX < 0;
+  bool isFlippedY = scaleY < 0;
+  
+  printf("\n=== 翻转状态调试信息 ===\n");
+  printf("[调试] 图层: '%s'\n", selectedTargetLayer->name().c_str());
+  printf("[调试] 变换矩阵: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]\n",
+         globalMatrix.getScaleX(), globalMatrix.getSkewY(), globalMatrix.getSkewX(),
+         globalMatrix.getScaleY(), globalMatrix.getTranslateX(), globalMatrix.getTranslateY());
+  printf("[调试] 缩放值: scaleX=%.3f, scaleY=%.3f\n", scaleX, scaleY);
+  printf("[调试] 翻转状态: X轴%s, Y轴%s\n", 
+         isFlippedX ? "翻转" : "正常", isFlippedY ? "翻转" : "正常");
+  
+  printf("[调试] 角映射关系:\n");
+  const char* originalNames[] = {"左上角", "右上角", "右下角", "左下角"};
+  for (size_t i = 0; i < 4; ++i) {
+    std::string actualName = getActualCornerName(static_cast<int>(i));
+    if (actualName != originalNames[i]) {
+      printf("  索引%zu: %s -> %s (已映射)\n", i, originalNames[i], actualName.c_str());
+    } else {
+      printf("  索引%zu: %s (未变化)\n", i, originalNames[i]);
+    }
+  }
+  printf("========================\n\n");
+}
+
+int TGFXBaseView::getOppositeCornerIndex(int cornerIndex) {
+  if (!selectedTargetLayer || cornerIndex < 0 || cornerIndex >= 4) {
+    return -1;
+  }
+  
+  // 获取全局变换矩阵
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  // 检测翻转状态
+  float scaleX = globalMatrix.getScaleX();
+  float scaleY = globalMatrix.getScaleY();
+  bool isFlippedX = scaleX < 0;
+  bool isFlippedY = scaleY < 0;
+  
+  // 在没有翻转的情况下，对角点的映射关系：
+  // 0(左上) <-> 2(右下)
+  // 1(右上) <-> 3(左下)
+  int oppositeIndex;
+  
+  if (!isFlippedX && !isFlippedY) {
+    // 没有翻转：标准对角关系
+    oppositeIndex = (cornerIndex + 2) % 4;
+  } else if (isFlippedX && !isFlippedY) {
+    // 只有X轴翻转：左右互换，但对角关系保持
+    // 原始: 0<->2, 1<->3
+    // X翻转后: 1<->3, 0<->2 (实际位置变了，但索引对角关系不变)
+    oppositeIndex = (cornerIndex + 2) % 4;
+  } else if (!isFlippedX && isFlippedY) {
+    // 只有Y轴翻转：上下互换，但对角关系保持
+    oppositeIndex = (cornerIndex + 2) % 4;
+  } else {
+    // 两轴都翻转：对角关系保持
+    oppositeIndex = (cornerIndex + 2) % 4;
+  }
+  
+  return oppositeIndex;
+}
+
+std::vector<float> TGFXBaseView::getOppositeCornerWorldCoords(int cornerIndex) {
+  std::vector<float> result;
+  
+  if (!selectedTargetLayer || cornerIndex < 0 || cornerIndex >= 4) {
+    return result;
+  }
+  
+  // 获取对角点索引
+  int oppositeIndex = getOppositeCornerIndex(cornerIndex);
+  if (oppositeIndex < 0) {
+    return result;
+  }
+  
+  // 获取图层边界和全局变换矩阵
+  const auto localBounds = selectedTargetLayer->getBounds(nullptr, true);
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  // 定义四个角的本地坐标
+  std::vector<tgfx::Point> corners = {
+    tgfx::Point::Make(localBounds.left, localBounds.top),     // 0: 左上角
+    tgfx::Point::Make(localBounds.right, localBounds.top),    // 1: 右上角  
+    tgfx::Point::Make(localBounds.right, localBounds.bottom), // 2: 右下角
+    tgfx::Point::Make(localBounds.left, localBounds.bottom),  // 3: 左下角
+  };
+  
+  // 获取对角点的本地坐标并转换为世界坐标
+  const auto& oppositeCorner = corners[static_cast<size_t>(oppositeIndex)];
+  tgfx::Point worldPoint;
+  globalMatrix.mapXY(oppositeCorner.x, oppositeCorner.y, &worldPoint);
+  
+  result.push_back(worldPoint.x);
+  result.push_back(worldPoint.y);
+  
+  printf("[对角点计算] 角%d的对角点是角%d，世界坐标：(%.2f, %.2f)\n", 
+         cornerIndex, oppositeIndex, worldPoint.x, worldPoint.y);
+  
+  return result;
+}
+
+void TGFXBaseView::debugCornerAndOppositeInfo() {
+  if (!selectedTargetLayer) {
+    printf("[调试] 没有选中的图层\n");
+    return;
+  }
+  
+  printf("\n=== 角和对角点详细信息 ===\n");
+  printf("[调试] 图层: '%s'\n", selectedTargetLayer->name().c_str());
+  
+  // 获取图层边界和全局变换矩阵
+  const auto localBounds = selectedTargetLayer->getBounds(nullptr, true);
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  // 检测翻转状态
+  float scaleX = globalMatrix.getScaleX();
+  float scaleY = globalMatrix.getScaleY();
+  bool isFlippedX = scaleX < 0;
+  bool isFlippedY = scaleY < 0;
+  printf("[调试] 翻转状态: X轴%s, Y轴%s\n", 
+         isFlippedX ? "翻转" : "正常", isFlippedY ? "翻转" : "正常");
+  
+  // 定义四个角的本地坐标
+  std::vector<tgfx::Point> corners = {
+    tgfx::Point::Make(localBounds.left, localBounds.top),     // 0: 左上角
+    tgfx::Point::Make(localBounds.right, localBounds.top),    // 1: 右上角  
+    tgfx::Point::Make(localBounds.right, localBounds.bottom), // 2: 右下角
+    tgfx::Point::Make(localBounds.left, localBounds.bottom),  // 3: 左下角
+  };
+  
+  const char* originalNames[] = {"左上角", "右上角", "右下角", "左下角"};
+  
+  printf("[调试] 所有角的信息:\n");
+  for (size_t i = 0; i < 4; ++i) {
+    // 当前角的世界坐标
+    tgfx::Point worldPoint;
+    globalMatrix.mapXY(corners[i].x, corners[i].y, &worldPoint);
+    
+    // 实际角名称（考虑翻转）
+    std::string actualName = getActualCornerName(static_cast<int>(i));
+    
+    // 对角点信息
+    int oppositeIndex = getOppositeCornerIndex(static_cast<int>(i));
+    tgfx::Point oppositeWorldPoint;
+    globalMatrix.mapXY(corners[static_cast<size_t>(oppositeIndex)].x, 
+                      corners[static_cast<size_t>(oppositeIndex)].y, &oppositeWorldPoint);
+    std::string oppositeActualName = getActualCornerName(oppositeIndex);
+    
+    printf("  角%zu: %s -> %s, 世界坐标(%.2f, %.2f)\n", 
+           i, originalNames[i], actualName.c_str(), worldPoint.x, worldPoint.y);
+    printf("    对角点: 角%d (%s -> %s), 世界坐标(%.2f, %.2f)\n", 
+           oppositeIndex, originalNames[static_cast<size_t>(oppositeIndex)], 
+           oppositeActualName.c_str(), oppositeWorldPoint.x, oppositeWorldPoint.y);
+  }
+  
+  printf("============================\n\n");
 }
 
 void TGFXBaseView::setSelectionLineWidth(float width) {
@@ -1460,7 +1818,6 @@ bool TGFXBaseView::validateSelectionState() {
   // 检查角控制器是否仍然有效
   for (auto it = cornerHandles.begin(); it != cornerHandles.end();) {
     if (!(*it) || !(*it)->parent()) {
-      printf("[状态验证] 发现无效角控制器\n");
       if (*it) {
         (*it)->removeFromParent();
       }
