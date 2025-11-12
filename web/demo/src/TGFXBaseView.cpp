@@ -457,11 +457,73 @@ bool TGFXBaseView::updateSelectionBox(float pointX, float pointY) {
     auto fillStyle = tgfx::SolidColor::Make(tgfx::Color::FromRGBA(229, 235, 211, 100));
     selectBoxLayer->setFillStyle(fillStyle);
     selectBoxLayer->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41)));
+    appHost->displayList.root()->addChild(selectBoxLayer);
   }
   auto rectPath = tgfx::Path();
   rectPath.addRect({selectBoxPointX, selectBoxPointY, pointX, pointY});
   selectBoxLayer->setPath(rectPath);
-  appHost->displayList.root()->addChild(selectBoxLayer);
+
+
+  // Update SelectedLayer
+  auto layers = appHost->getLayersUnderPoint(pointX, pointX);
+  printf("pointX,pointY:(%.2f,%.2f) layers.size:%zu\n",pointX,pointY,layers.size());
+  if (layers.size() > 0) {
+    std::shared_ptr<tgfx::Layer> layer =nullptr;
+    // layers[layers.size-1] == rootLayer
+    for (size_t i=0;i<layers.size()-1;++i) {
+      if (layers[i]->name() != "selectBoxLayer") {
+        layer=layers[i];
+        break;
+      }
+    }
+    if (!layer) {
+      return true;
+    }
+
+    // 验证鼠标是否真的在图层的内容边界内
+    auto contentBounds = layer->getBounds(nullptr, true);
+    auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
+    auto globalContentBounds = globalMatrix.mapRect(contentBounds);
+
+    if (!globalContentBounds.contains(pointX, pointX)) {
+      return true;
+    }
+    if (!selectBoxHighLightLayer) {
+      selectBoxHighLightLayer = tgfx::ShapeLayer::Make();
+      selectBoxHighLightLayer->setName("selectBoxHighLightLayer");
+      selectBoxHighLightLayer->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41)));
+
+      appHost->displayList.root()->addChild(selectBoxHighLightLayer);
+    }
+
+    if (std::find(selectedLayers.begin(), selectedLayers.end(), layer) !=selectedLayers.end()) {
+      return true;
+    }
+    selectedLayers.push_back(layer);
+    if (selectBoxHighLightLayer) {
+        tgfx::Rect rect0=selectedLayers[0]->getBounds();
+        for (size_t i=1;i<selectedLayers.size();++i) {
+          tgfx::Rect rect1 = selectedLayers[i]->getBounds();
+          if (rect0.top>rect1.top) {
+            rect0.top = rect1.top;
+          }
+          if (rect0.left>rect1.left) {
+            rect0.left = rect1.left;
+          }
+          if (rect0.bottom<rect1.bottom) {
+            rect0.bottom = rect1.bottom;
+          }
+          if (rect0.right<rect1.right) {
+            rect0.right = rect1.right;
+          }
+        }
+
+        auto rectPath2 = tgfx::Path();
+        rectPath2.addRect(rect0);
+        selectBoxHighLightLayer->setPath(rectPath2);
+      selectBoxHighLightLayer->setMatrix(globalMatrix);
+    }
+  }
 
   return true;
 }
@@ -473,6 +535,12 @@ bool TGFXBaseView::resetSelectBox() {
 
   selectBoxLayer->removeFromParent();
   selectBoxLayer = nullptr;
+
+  if (selectBoxHighLightLayer) {
+    selectBoxHighLightLayer->removeFromParent();
+    selectBoxHighLightLayer=nullptr;
+    selectedLayers.clear();
+  }
 
   return true;
 }

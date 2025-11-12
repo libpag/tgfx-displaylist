@@ -17,13 +17,26 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////
 #pragma once
 #include <emscripten/bind.h>
+#include <set>
 #include "CoordinateTransformer.h"
 #include "hello2d/LayerBuilder.h"
 #include "tgfx/gpu/opengl/webgl/WebGLWindow.h"
 #include "tgfx/layers/ShapeLayer.h"
 #include "tgfx/layers/SolidColor.h"
-
 namespace displaylist {
+
+struct SelectedLayerInfo {
+  std::shared_ptr<tgfx::Layer> layer;
+  tgfx::Layer* parentLayer;
+  int index;
+};
+
+// struct LayerPtrCompare {
+//   bool operator()(const std::shared_ptr<tgfx::Layer>& a, const std::shared_ptr<tgfx::Layer>& b) const {
+//     return a.get() < b.get();  // 比较 shared_ptr 的裸指针地址
+//   }
+// };
+
 class TGFXBaseView {
  public:
   TGFXBaseView(const std::string& canvasID);
@@ -100,6 +113,9 @@ class TGFXBaseView {
   std::shared_ptr<tgfx::ShapeLayer> selectBoxLayer = nullptr;
 
   float selectBoxPointX = 0.f, selectBoxPointY = 0.f;
+
+  std::shared_ptr<tgfx::ShapeLayer> selectBoxHighLightLayer = nullptr;
+  std::vector<std::shared_ptr<tgfx::Layer>> selectedLayers = {};
 
   // 保存当前渲染设置，确保在重新构建layer tree时能够重新应用
   int currentRenderMode = 0;  // 0=Direct, 1=Partial, 2=Tiled

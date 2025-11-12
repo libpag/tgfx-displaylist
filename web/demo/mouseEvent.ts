@@ -261,7 +261,8 @@ export class GestureManager {
             // 只有当增量不为零时才处理移动
             if (screenDeltaX !== 0 || screenDeltaY !== 0) {
                 if (moveSelectBox) {
-                    shareData.tgfxBaseView?.updateSelectionBox(clientXY.clientX, clientXY.clientY);
+                    const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+                    shareData.tgfxBaseView?.updateSelectionBox(worldCoords.worldX, worldCoords.worldY);
                 } else {
                     // 直接使用屏幕增量，让后端处理坐标变换
                     try {
@@ -292,6 +293,21 @@ export class GestureManager {
 
     public onMouseLeave(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
         // 鼠标离开canvas时的处理
+        if (event.button === 0) { // 判断是否为左键
+            if (hasMoved) {
+                if (moveSelectBox) {
+                    shareData.tgfxBaseView.resetSelectBox();
+                    moveSelectBox = false;
+                }
+
+            } else {
+                const clientXY = ConvertCoordinates(event, canvas);
+                const worldCoords = screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+            }
+            // 重置状态
+            isMouseDown = false;
+            hasMoved = false;
+        }
     }
 
     public onMouseDown(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
