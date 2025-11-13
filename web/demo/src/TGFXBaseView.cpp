@@ -17,6 +17,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////
 #include "TGFXBaseView.h"
 #include <cmath>
+#include <unordered_set>
 #include "hello2d/LayerBuilder.h"
 #include "tgfx/core/Point.h"
 #include "tgfx/layers/ImageLayer.h"
@@ -808,6 +809,64 @@ void TGFXBaseView::endRotation() {
   printf("[旋转] 最终翻转状态: X轴%s, Y轴%s\n", 
          isFlippedX ? "翻转" : "正常", isFlippedY ? "翻转" : "正常");
   
+  // 添加图层树诊断输出
+  printf("\n[图层树诊断] 旋转结束后的图层树结构:\n");
+  auto rootLayer = appHost->displayList.root();
+  if (rootLayer) {
+    const auto& childrenList = rootLayer->children();
+    printf("[图层树诊断] Root图层总共 %zu 个子图层\n", childrenList.size());
+    
+    for (size_t i = 0; i < childrenList.size(); i++) {
+      auto child = childrenList[i];
+      const char* layerType = "Unknown";
+      
+      // 使用 type() 方法判断图层类型
+      auto type = child->type();
+      if (type == tgfx::LayerType::Shape) {
+        layerType = "ShapeLayer";
+      } else if (type == tgfx::LayerType::Image) {
+        layerType = "ImageLayer";
+      } else if (type == tgfx::LayerType::Layer) {
+        layerType = "Layer";
+      }
+      
+      printf("[图层树诊断]   子图层%zu: '%s' (类型:%s, 地址:%p, visible:%s)\n", 
+             i, child->name().c_str(), layerType, (void*)child.get(),
+             child->visible() ? "true" : "false");
+      
+      // 输出矩阵信息
+      auto matrix = child->matrix();
+      printf("[图层树诊断]     矩阵: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]\n",
+             matrix.getScaleX(), matrix.getSkewX(), matrix.getSkewY(),
+             matrix.getScaleY(), matrix.getTranslateX(), matrix.getTranslateY());
+      
+      // 如果是ShapeLayer，输出描边信息
+      if (type == tgfx::LayerType::Shape) {
+        auto shapeLayer = std::static_pointer_cast<tgfx::ShapeLayer>(child);
+        printf("[图层树诊断]     线宽: %.4f\n", shapeLayer->lineWidth());
+      }
+    }
+    
+    // 输出选中状态
+    printf("[图层树诊断] latestSelectedLayer: %p ('%s')\n", 
+           (void*)latestSelectedLayer.get(),
+           latestSelectedLayer ? latestSelectedLayer->name().c_str() : "null");
+    printf("[图层树诊断] selectedTargetLayer: %p ('%s')\n", 
+           (void*)selectedTargetLayer.get(), 
+           selectedTargetLayer ? selectedTargetLayer->name().c_str() : "null");
+    
+    // 输出角控制器状态
+    printf("[图层树诊断] 角控制器数量: %zu\n", cornerHandles.size());
+    for (size_t i = 0; i < cornerHandles.size(); i++) {
+      if (cornerHandles[i]) {
+        printf("[图层树诊断]   角控制器%zu: 地址=%p, 父图层=%s\n", 
+               i, (void*)cornerHandles[i].get(),
+               cornerHandles[i]->parent() ? "有" : "null");
+      }
+    }
+  }
+  printf("\n");
+  
   printf("===================\n\n");
 }
 
@@ -995,11 +1054,80 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
 
   auto layers = appHost->getLayersUnderPoint(x, y);
   
-  printf("[选中调试] 检测到 %zu 个图层，坐标(%.2f, %.2f)\n", layers.size(), x, y);
+  printf("[选中调试] 原始检测到 %zu 个图层，坐标(%.2f, %.2f)\n", layers.size(), x, y);
+  auto rootLayer = appHost->displayList.root();
+  printf("[选中调试] 当前根图层地址: %p\n", (void*)rootLayer);
+  
+  // 先输出原始图层信息
   for (size_t i = 0; i < layers.size(); i++) {
-    printf("[选中调试]   图层%zu: %s\n", i, layers[i]->name().c_str());
+    auto layer = layers[i];
+    const char* layerType = "Unknown";
+    auto type = layer->type();
+    if (type == tgfx::LayerType::Shape) {
+      layerType = "ShapeLayer";
+    } else if (type == tgfx::LayerType::Image) {
+      layerType = "ImageLayer";
+    } else if (type == tgfx::LayerType::Layer) {
+      layerType = "Layer";
+    }
+    
+    bool hasParent = (layer->parent() != nullptr);
+    printf("[选中调试]   原始图层%zu: '%s' (类型:%s, 父图层:%s, 地址:%p)\n", 
+           i, layer->name().c_str(), layerType, 
+           hasParent ? (layer->parent()->name().empty() ? "root" : layer->parent()->name().c_str()) : "null",
+           (void*)layer.get());
   }
   
+  // 过滤掉根图层和父图层为null的异常图层
+  std::vector<std::shared_ptr<tgfx::Layer>> validLayers;
+  int filteredCount = 0;
+  
+  for (auto layer : layers) {
+    bool isRootLayer = (layer.get() == rootLayer);
+    bool hasValidParent = (layer->parent() != nullptr);
+    
+    // 只保留有有效父图层的非根图层
+    if (isRootLayer) {
+      filteredCount++;
+      printf("[选中调试] ⚠️ 过滤掉根图层: 地址=%p\n", (void*)layer.get());
+    } else if (!hasValidParent) {
+      filteredCount++;
+      printf("[选中调试] ⚠️ 过滤掉异常图层（父图层为null）: '%s', 地址=%p\n", 
+             layer->name().c_str(), (void*)layer.get());
+    } else {
+      validLayers.push_back(layer);
+      printf("[选中调试] ✅ 保留有效图层: '%s', 地址=%p\n", 
+             layer->name().c_str(), (void*)layer.get());
+    }
+  }
+  
+  printf("[选中调试] 过滤结果：原始%zu个 → 过滤掉%d个 → 剩余%zu个有效图层\n", 
+         layers.size(), filteredCount, validLayers.size());
+  
+  layers = validLayers;
+  
+  
+  // 去重：移除重复的图层（相同地址的图层只保留第一个）
+  std::vector<std::shared_ptr<tgfx::Layer>> uniqueLayers;
+  std::unordered_set<tgfx::Layer*> seenPointers;
+  
+  for (auto layer : layers) {
+    if (seenPointers.find(layer.get()) == seenPointers.end()) {
+      uniqueLayers.push_back(layer);
+      seenPointers.insert(layer.get());
+    } else {
+      printf("[选中调试] ⚠️ 去重：移除重复图层 '%s' (地址:%p)\n", 
+             layer->name().c_str(), (void*)layer.get());
+    }
+  }
+  
+  if (uniqueLayers.size() != layers.size()) {
+    printf("[选中调试] 去重结果：%zu个 → %zu个唯一图层\n", 
+           layers.size(), uniqueLayers.size());
+  }
+  
+  layers = uniqueLayers;
+
   // 前置判断：如果点击的是控制图层，需要区分边框和内部
   if (!layers.empty()) {
     const std::string& layerName = layers[0]->name();
@@ -1026,41 +1154,33 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
 
   // 按层级顺序选择图层，支持穿透选择（与高亮逻辑保持一致）
   std::shared_ptr<tgfx::Layer> bestLayer = nullptr;
-  for (auto layer : layers) {
-    // 跳过控制图层
+  printf("[选中调试] 开始遍历 %zu 个有效图层\n", layers.size());
+  
+  for (size_t i = 0; i < layers.size(); i++) {
+    auto layer = layers[i];
     const std::string& layerName = layer->name();
+    
+    printf("[选中调试]   检查图层%zu: '%s' (地址:%p)\n", i, layerName.c_str(), (void*)layer.get());
+    
+    // 跳过控制图层
     if (layerName == "__CORNER_HANDLE__" || layerName == "__SELECTION_BORDER__") {
+      printf("[选中调试]     → 跳过：控制图层\n");
       continue;
     }
     
-    // 如果这个图层与当前选中的图层相同，尝试选择下一个图层（穿透效果）
-    if (layer == selectedTargetLayer) {
-      continue;
-    }
-    
-    // 选择第一个（最顶层的）非控制图层且非当前选中的图层
+    // 选择第一个（最顶层的）非控制图层
+    // 注意：不跳过已选中的图层，这样可以避免选中框在旋转后频繁切换
     bestLayer = layer;
-    printf("[选中调试] 找到新图层: %s\n", layer->name().c_str());
+    printf("[选中调试]     ✅ 找到可选中的图层\n");
     break;
   }
   
-  // 如果没有找到其他图层，且点击位置有已选中的图层，则保持当前选中状态
-  if (!bestLayer && !layers.empty()) {
-    for (auto layer : layers) {
-      const std::string& layerName = layer->name();
-      if (layerName == "__CORNER_HANDLE__" || layerName == "__SELECTION_BORDER__") {
-        continue;
-      }
-      if (layer == selectedTargetLayer) {
-        printf("[选中调试] 点击了已选中的图层: %s，保持选中状态\n", layer->name().c_str());
-        appHost->markDirty();
-        return true;
-      }
-    }
+  if (!bestLayer) {
+    printf("[选中调试] ❌ 未找到可选中的图层\n");
   }
   
   if (bestLayer) {
-    printf("[选中调试] 选中新图层: %s\n", bestLayer->name().c_str());
+    printf("[选中调试] ✅ 选中新图层: '%s' (地址:%p)\n", bestLayer->name().c_str(), (void*)bestLayer.get());
 
     // 先清理旧的选择框
     resetSelectedLayer();
@@ -1103,15 +1223,8 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
     latestSelectedLayer = selectionBorder;
     selectedTargetLayer = bestLayer;
 
-    // 创建四个角控制器
+    // 创建四个角控制器（createCornerHandles 内部已经添加到根图层）
     createCornerHandles(bestLayer);
-
-    // 添加角控制器到根图层
-    if (rootLayer) {
-      for (auto handle : cornerHandles) {
-        rootLayer->addChild(handle);
-      }
-    }
 
   } else {
     // 点击空白处，清除选中
@@ -1135,11 +1248,32 @@ bool TGFXBaseView::resetSelectedLayer() {
   
   // 2. 移除选中边框
   if (latestSelectedLayer) {
+    printf("[状态管理] 移除选中边框: 地址=%p\n", (void*)latestSelectedLayer.get());
     if (latestSelectedLayer->parent()) {
       latestSelectedLayer->removeFromParent();
     }
     latestSelectedLayer.reset();
     hasChanges = true;
+  }
+  
+  // ⚠️ 关键修复：从根图层中移除所有名为 __SELECTION_BORDER__ 的图层
+  // 这是为了清理可能遗留的选中边框（防止重复添加导致的问题）
+  if (appHost) {
+    auto rootLayer = appHost->displayList.root();
+    if (rootLayer) {
+      auto children = rootLayer->children();
+      int removedCount = 0;
+      for (auto child : children) {
+        if (child && child->name() == "__SELECTION_BORDER__") {
+          printf("[状态管理]   ⚠️ 发现遗留的选中边框: 地址=%p，正在移除\n", (void*)child.get());
+          child->removeFromParent();
+          removedCount++;
+        }
+      }
+      if (removedCount > 0) {
+        printf("[状态管理]   清理了 %d 个遗留的选中边框\n", removedCount);
+      }
+    }
   }
   
   // 3. 清空目标引用
@@ -1229,9 +1363,15 @@ void TGFXBaseView::createCornerHandles(std::shared_ptr<tgfx::Layer> layer) {
 }
 
 void TGFXBaseView::removeCornerHandles() {
+  printf("[角控制器清理] 开始清理，当前记录了 %zu 个角控制器\
+", cornerHandles.size());
+  
   // 先从父节点移除，再清理引用
   for (auto& handle : cornerHandles) {
     if (handle) {
+      printf("[角控制器清理]   移除角控制器: 地址=%p, 有父图层=%s\
+", 
+             (void*)handle.get(), handle->parent() ? "是" : "否");
       // 检查父节点是否存在，避免重复移除
       if (handle->parent()) {
         handle->removeFromParent();
@@ -1244,6 +1384,33 @@ void TGFXBaseView::removeCornerHandles() {
   // 清空容器并释放内存
   cornerHandles.clear();
   cornerHandles.shrink_to_fit();
+  
+  // ⚠️ 关键修复：从根图层中移除所有名为 __CORNER_HANDLE__ 的图层
+  // 这是为了清理可能遗留的角控制器（防止重复添加导致的问题）
+  if (appHost) {
+    auto rootLayer = appHost->displayList.root();
+    if (rootLayer) {
+      auto children = rootLayer->children();
+      printf("[角控制器清理]   根图层当前有 %zu 个子图层\
+", children.size());
+      int removedCount = 0;
+      for (auto child : children) {
+        if (child && child->name() == "__CORNER_HANDLE__") {
+          printf("[角控制器清理]   ⚠️ 发现遗留的角控制器: 地址=%p，正在移除\
+", (void*)child.get());
+          child->removeFromParent();
+          removedCount++;
+        }
+      }
+      if (removedCount > 0) {
+        printf("[角控制器清理]   清理了 %d 个遗留的角控制器\
+", removedCount);
+      }
+    }
+  }
+  
+  printf("[角控制器清理] 清理完成\
+");
 }
 
 void TGFXBaseView::updateCornerHandles() {
