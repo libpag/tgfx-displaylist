@@ -362,6 +362,8 @@ function setCursor(canvas: HTMLElement, cursorType: string, shareData?: ShareDat
         shareData && shareData.tgfxBaseView) {
         try {
             rotationAngle = (shareData.tgfxBaseView as any).getSelectedLayerRotation();
+            const rotationDegrees = rotationAngle * 180 / Math.PI;
+            console.log(`[光标调试] 角位置: ${cursorType}, 旋转角度: ${rotationDegrees.toFixed(2)}°`);
         } catch (error) {
             console.error('获取旋转角度失败:', error);
         }
