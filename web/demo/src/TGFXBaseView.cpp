@@ -169,7 +169,55 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
     return true;
   }
 
+  // ========== 全局缩放诊断输出 ==========
+  static float lastDiagnosticZoom = 0;
+  static float lastDiagnosticOffsetX = 0;
+  static float lastDiagnosticOffsetY = 0;
+  
+  bool zoomChanged = (lastDiagnosticZoom != zoom || lastDiagnosticOffsetX != offsetX || lastDiagnosticOffsetY != offsetY);
+  
+  if (selectedTargetLayer && zoomChanged) {
+    printf("\n========== [全局缩放] updateZoomAndOffset 调用前 ==========\n");
+    printf("[输入参数] zoom=%.6f, offset=(%.2f, %.2f)\n", zoom, offsetX, offsetY);
+    
+    // 输出选中图层的矩阵
+    auto layerMatrix = selectedTargetLayer->matrix();
+    printf("[缩放前] 选中图层矩阵: [%.6f, %.6f, %.2f]\n", 
+           layerMatrix.getScaleX(), layerMatrix.getSkewY(), layerMatrix.getTranslateX());
+    printf("                      [%.6f, %.6f, %.2f]\n", 
+           layerMatrix.getSkewX(), layerMatrix.getScaleY(), layerMatrix.getTranslateY());
+    
+    // 输出世界坐标边界
+    auto root = selectedTargetLayer->root();
+    auto worldBounds = selectedTargetLayer->getBounds(root, true);
+    printf("[缩放前] 世界坐标边界: left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n",
+           worldBounds.left, worldBounds.top, worldBounds.right, worldBounds.bottom);
+    
+    lastDiagnosticZoom = zoom;
+    lastDiagnosticOffsetX = offsetX;
+    lastDiagnosticOffsetY = offsetY;
+  }
+
   appHost->updateZoomAndOffset(zoom, tgfx::Point(offsetX, offsetY));
+  
+  if (selectedTargetLayer && zoomChanged) {
+    printf("\n========== [全局缩放] updateZoomAndOffset 调用后 ==========\n");
+    
+    // 输出选中图层的矩阵（应该没有变化）
+    auto layerMatrix = selectedTargetLayer->matrix();
+    printf("[缩放后] 选中图层矩阵: [%.6f, %.6f, %.2f]\n", 
+           layerMatrix.getScaleX(), layerMatrix.getSkewY(), layerMatrix.getTranslateX());
+    printf("                      [%.6f, %.6f, %.2f]\n", 
+           layerMatrix.getSkewX(), layerMatrix.getScaleY(), layerMatrix.getTranslateY());
+    
+    // 输出世界坐标边界（应该没有变化）
+    auto root = selectedTargetLayer->root();
+    auto worldBounds = selectedTargetLayer->getBounds(root, true);
+    printf("[缩放后] 世界坐标边界: left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n",
+           worldBounds.left, worldBounds.top, worldBounds.right, worldBounds.bottom);
+    
+    printf("========== [全局缩放] 结束 ==========\n\n");
+  }
 
   // 检查是否需要重新创建选中效果（画布大小变化后）
   if (selectedTargetLayer && !latestSelectedLayer) {
@@ -217,12 +265,6 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
     lastUpdateZoom = zoom;
     lastUpdateOffsetX = offsetX;
     lastUpdateOffsetY = offsetY;
-  } else {
-    // 即使 needsUpdate 为 false，也要在有选中图层时强制更新边框
-    // 这是为了防止缩放过程中浮点数精度问题导致的边框消失
-    if (latestSelectedLayer) {
-      updateSelectedLineWidth();
-    }
   }
 
   auto canvas = surface->getCanvas();
@@ -817,13 +859,41 @@ void TGFXBaseView::scaleSelectedLayerWithLocalPivot(float scaleX, float scaleY, 
     return;
   }
 
-  printf("[缩放C++] 使用本地枢轴点：(%.2f, %.2f)，缩放因子：(%.4f, %.4f)\\n", 
-         localPivotX, localPivotY, scaleX, scaleY);
+  // ========== 角控制器缩放诊断输出 ==========
+  printf("\n========== [角控制器缩放] 开始 ==========\n");
+  printf("[输入参数] 缩放因子: (%.6f, %.6f), 本地枢轴点: (%.2f, %.2f)\n", 
+         scaleX, scaleY, localPivotX, localPivotY);
+  
+  // 输出缩放前的图层矩阵（完整的6个值）
+  auto oldMatrix = selectedTargetLayer->matrix();
+  printf("[缩放前] 选中图层矩阵: [%.6f, %.6f, %.2f]\n", 
+         oldMatrix.getScaleX(), oldMatrix.getSkewY(), oldMatrix.getTranslateX());
+  printf("                      [%.6f, %.6f, %.2f]\n", 
+         oldMatrix.getSkewX(), oldMatrix.getScaleY(), oldMatrix.getTranslateY());
+  
+  // 输出图层的世界坐标边界
+  auto root = selectedTargetLayer->root();
+  auto worldBounds = selectedTargetLayer->getBounds(root, true);
+  printf("[缩放前] 世界坐标边界: left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n",
+         worldBounds.left, worldBounds.top, worldBounds.right, worldBounds.bottom);
 
-  // 直接在本地坐标系缩放，使用本地坐标作为枢轴
+  // 执行缩放
   tgfx::Matrix newMatrix = selectedTargetLayer->matrix();
   newMatrix.preScale(scaleX, scaleY, localPivotX, localPivotY);
   selectedTargetLayer->setMatrix(newMatrix);
+
+  // 输出缩放后的图层矩阵（完整的6个值）
+  printf("[缩放后] 选中图层矩阵: [%.6f, %.6f, %.2f]\n", 
+         newMatrix.getScaleX(), newMatrix.getSkewY(), newMatrix.getTranslateX());
+  printf("                      [%.6f, %.6f, %.2f]\n", 
+         newMatrix.getSkewX(), newMatrix.getScaleY(), newMatrix.getTranslateY());
+  
+  // 输出缩放后的世界坐标边界
+  auto worldBoundsAfter = selectedTargetLayer->getBounds(root, true);
+  printf("[缩放后] 世界坐标边界: left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n",
+         worldBoundsAfter.left, worldBoundsAfter.top, worldBoundsAfter.right, worldBoundsAfter.bottom);
+  
+  printf("========== [角控制器缩放] 结束 ==========\n\n");
 
   updateCornerHandles();
   updateSelectedLineWidth();
@@ -2040,6 +2110,7 @@ bool TGFXBaseView::isPointInRotateZone(float x, float y) {
   // 旋转区域 = 在外边界内 && 不在角控制器区域内 && 不在角控制器上
   return rotateZoneOuterBounds.contains(x, y) && !cornerZoneBounds.contains(x, y);
 }
+
 
 // 添加缺失的函数实现
 tgfx::Matrix TGFXBaseView::getLayerGlobalMatrix(std::shared_ptr<tgfx::Layer> layer) {
