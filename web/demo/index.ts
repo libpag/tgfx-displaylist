@@ -38,8 +38,20 @@ if (typeof window !== 'undefined') {
             }
 
         } catch (error) {
-            console.error(error);
-            throw new Error("displaylist init failed. Please check the .wasm file path!.");
+            const message = (error as Error).message || 'An unknown error occurred.';
+            const browserWarning = document.getElementById('browser-warning') as HTMLElement;
+            const maskOverlay = document.getElementById('mask-overlay') as HTMLElement;
+            const errorMessage = document.getElementById('error-message') as HTMLElement;
+
+            if (browserWarning && maskOverlay && errorMessage) {
+                errorMessage.textContent = message;
+                browserWarning.classList.remove('hidden');
+                maskOverlay.classList.remove('hidden');
+                setTimeout(() => {
+                    browserWarning.classList.add('show');
+                }, 100);
+            }
+            console.error(error); // 仍然在控制台记录完整错误
         }
     };
 

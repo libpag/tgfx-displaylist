@@ -45,7 +45,7 @@ class CursorFactory {
 
         // 对于旋转后的图层，光标方向应该直接跟随旋转角度
         // 不再需要额外的翻转修正（因为我们禁用了翻转检测）
-        const totalAngle = baseAngle + rotationAngle;
+        const totalAngle = (baseAngle + rotationAngle) % 360;
 
         // 创建旋转后的箭头 SVG
         const svg = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -197,7 +197,7 @@ class CursorDetectionCache {
                         case '右下角':
                             return 'se-resize';
                         default:
-                            return 'nw-resize';
+                            return 'default'; // 如果没有匹配的角，则返回默认光标
                     }
                 }
             }
@@ -1010,7 +1010,10 @@ export class GestureManager {
 
             if (screenDeltaX !== 0 || screenDeltaY !== 0) {
                 try {
-                    shareData.tgfxBaseView?.moveHighlightLayer(screenDeltaX, screenDeltaY);
+                    // 将屏幕坐标增量转换为世界坐标增量
+                    const worldDeltaX = screenDeltaX / shareData.zoom;
+                    const worldDeltaY = screenDeltaY / shareData.zoom;
+                    shareData.tgfxBaseView?.moveHighlightLayer(worldDeltaX, worldDeltaY);
                 } catch (error) {
                     console.error('移动图层时出错:', error);
                 }
@@ -1093,6 +1096,18 @@ export class GestureManager {
                         }
                     }
                 }
+            } else {
+                // 如果光标是缩放类型但未满足其他条件，则执行默认的选择和移动逻辑
+                shareData.tgfxBaseView?.resetHighlightLayer();
+                if (shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY)) {
+                    lastPointX = clientXY.clientX;
+                    lastPointY = clientXY.clientY;
+                    isMouseDown = true;
+                    hasMoved = false;
+                }
+                shareData.tgfxBaseView?.markDirty();
+                animationLoop(shareData);
+                return; // 提前返回，避免执行后续逻辑
             }
             
             // 检测旋转操作 - 只有当光标是旋转类型时才进入旋转模式
@@ -1107,6 +1122,13 @@ export class GestureManager {
                     const layerType = layerInfo.get(1);
                     layerId = layerInfo.get(2); // 获取图层指针地址作为ID
                     console.log(`[旋转] 选中图层：${layerName} (${layerType}), ID: ${layerId}`);
+                }
+
+                if (!layerId) {
+                    console.warn('[旋转] 无法获取图层有效ID，取消旋转并重置图层');
+                    shareData.tgfxBaseView?.resetHighlightLayer();
+                    shareData.tgfxBaseView?.resetSelectedLayer();
+                    return;
                 }
                 
                 // 获取并缓存中心点
@@ -1128,7 +1150,14 @@ export class GestureManager {
                     lastPointY = clientXY.clientY;
                     return;
                 } else {
-                    console.error('[旋转] 无法获取图层中心点，取消旋转操作');
+                    // 如果获取中心点失败，则回退到默认的选择和移动逻辑
+                    shareData.tgfxBaseView?.resetHighlightLayer();
+                    if (shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY)) {
+                        lastPointX = clientXY.clientX;
+                        lastPointY = clientXY.clientY;
+                        isMouseDown = true;
+                        hasMoved = false;
+                    }
                     return;
                 }
             }
@@ -1171,6 +1200,7 @@ export class GestureManager {
                 }
                 
                 scaleStateManager.endScaling();
+                shareData.tgfxBaseView?.resetSelectedLayer(); // 缩放结束后重置，避免影响下一次缩放
                 // 重置状态
                 isMouseDown = false;
                 hasMoved = false;

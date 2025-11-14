@@ -85,7 +85,27 @@ bool TGFXBaseView::updateSize(float devicePixelRatio) {
   width = std::max(1, width);
   height = std::max(1, height);
 
+  // 【核心修复】保存根图层的当前矩阵，避免被 updateScreen() 重置
+  tgfx::Matrix savedRootMatrix;
+  bool hasRootLayer = false;
+  auto displayListRoot = appHost->displayList.root();
+  if (displayListRoot && !displayListRoot->children().empty()) {
+    auto root = displayListRoot->children()[0];
+    if (root) {
+      savedRootMatrix = root->matrix();
+      hasRootLayer = true;
+    }
+  }
+
   auto sizeChanged = appHost->updateScreen(width, height, devicePixelRatio);
+
+  // 【核心修复】恢复根图层矩阵，保留用户的手动调整
+  if (sizeChanged && hasRootLayer && displayListRoot && !displayListRoot->children().empty()) {
+    auto root = displayListRoot->children()[0];
+    if (root) {
+      root->setMatrix(savedRootMatrix);
+    }
+  }
 
   if (sizeChanged) {
     window.reset();

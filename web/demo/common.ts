@@ -65,6 +65,19 @@ export class TGFXBaseView {
     public isPointInSelectionBorder: (x: number, y: number) => boolean;
     public markDirty: () => void;
     public resetMoveLayers: () => void;
+
+    // 交互增强方法
+    public isPointInCornerHandle: (x: number, y: number) => boolean;
+    public getSelectedLayerCorners: () => any; // 返回 vector<float>
+    public getSelectedLayerRotation: () => number;
+    public isPointInRotateZone: (x: number, y: number) => boolean;
+    public getSelectedLayerInfo: () => any; // 返回 vector<string>
+    public getSelectedLayerCenter: () => any; // 返回 vector<float>
+    public rotateSelectedLayer: (radians: number, px: number, py: number) => void;
+    public getSelectedLayerLocalCorner: (index: number) => any; // 返回 vector<float>
+    public localToWorldCoords: (lx: number, ly: number) => any; // 返回 vector<float>
+    public scaleSelectedLayerWithLocalPivot: (sx: number, sy: number, lx: number, ly: number) => void;
+    public getCornerNameByPosition: (index: number) => string;
 }
 
 export class ShareData {
@@ -184,7 +197,7 @@ function updateTexts() {
 
     const zoomValue = document.getElementById('zoomValue');
     if (zoomValue) {
-        zoomValue.textContent = zoomValue.textContent?.replace('%', '%') || '';
+        // 更新 zoom avalue 时不需要替换 ‘%’
     }
 }
 
@@ -363,20 +376,18 @@ export function updateSize(shareData: ShareData) {
         - parseFloat(style.borderTopWidth)
         - parseFloat(style.borderBottomWidth));
 
-    const scaleFactor = Math.max(1, Math.floor(window.devicePixelRatio * 100) / 100);
-    const newWidth = Math.max(1, Math.floor(width * scaleFactor));
-    const newHeight = Math.max(1, Math.floor(height * scaleFactor));
+    const devicePixelRatio = window.devicePixelRatio || 1.0;
+    const newWidth = Math.max(1, Math.floor(width * devicePixelRatio));
+    const newHeight = Math.max(1, Math.floor(height * devicePixelRatio));
 
-    const widthChanged = Math.abs(canvas.width - newWidth) > canvas.width * 0.001;
-    const heightChanged = Math.abs(canvas.height - newHeight) > canvas.height * 0.001;
-
-    if (widthChanged || heightChanged) {
+    // 只有当尺寸真正变化时才更新
+    if (canvas.width !== newWidth || canvas.height !== newHeight) {
         canvas.width = newWidth;
         canvas.height = newHeight;
         canvas.style.width = width + "px";
         canvas.style.height = height + "px";
 
-        shareData.tgfxBaseView.updateSize(scaleFactor);
+        shareData.tgfxBaseView.updateSize(devicePixelRatio);
         shareData.tgfxBaseView.markDirty();
         animationLoop(shareData);
     }
@@ -462,6 +473,10 @@ export function checkBrowser(): boolean {
     let isSupported = true;
     if (!isDesktop() || !isChromiumBased()) {
         if (browserWarning && maskOverlay) {
+            const errorMessage = browserWarning.querySelector('#error-message') as HTMLElement;
+            if (errorMessage) {
+                errorMessage.textContent = translations[detectBrowserLanguage()].desktopWarning;
+            }
             browserWarning.classList.remove('hidden');
             maskOverlay.classList.remove('hidden');
             setTimeout(() => {
@@ -595,21 +610,28 @@ export function bindEventListeners() {
                     shareData.offsetX = 0;
                     shareData.offsetY = 0;
 
-                    // 更新zoom显示
-                    const zoomValue = document.getElementById('zoomValue');
-                    if (zoomValue) {
-                        zoomValue.textContent = '100%';
-                    }
+                    if (shareData.tgfxBaseView) {
+                        // 更新zoom显示
+                        const zoomValue = document.getElementById('zoomValue');
+                        if (zoomValue) {
+                            zoomValue.textContent = '100%';
+                        }
 
-                    // 重置脏矩形显示状态
-                    const showDirtyRect = document.getElementById('showDirtyRect') as HTMLSelectElement | null;
-                    if (showDirtyRect) {
-                        shareData.tgfxBaseView.setShowDirtyRect(false);
-                        showDirtyRect.value = 'false';
-                    }
+                        // 重置脏矩形显示状态
+                        const showDirtyRect = document.getElementById('showDirtyRect') as HTMLSelectElement | null;
+                        if (showDirtyRect) {
+                            shareData.tgfxBaseView.setShowDirtyRect(false);
+                            showDirtyRect.value = 'false';
+                        }
 
-                    shareData.tgfxBaseView.markDirty();
-                    animationLoop(shareData);
+                        shareData.tgfxBaseView.markDirty();
+                        animationLoop(shareData);
+                    } else {
+                        // 如果 tgfxBaseView 无效，也要重置 zoom
+                        shareData.zoom = 1.0;
+                        shareData.offsetX = 0;
+                        shareData.offsetY = 0;
+                    }
                 }
             }
         });
