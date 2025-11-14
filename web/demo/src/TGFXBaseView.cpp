@@ -236,6 +236,9 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
     
     latestSelectedLayer = selectionBorder;
     
+    // 立即更新边框属性，而不是等待缩放变化
+    updateSelectedLineWidth();
+    
     // 重新创建角控制器
     createCornerHandles(selectedTargetLayer);
     if (rootLayer) {
@@ -243,6 +246,8 @@ bool TGFXBaseView::draw(int drawIndex, float zoom, float offsetX, float offsetY)
         rootLayer->addChild(handle);
       }
     }
+    // 立即更新角控制器位置
+    updateCornerHandles();
   }
 
   // 只在有高亮或选中图层时才更新，避免无必要的更新导致持续渲染
