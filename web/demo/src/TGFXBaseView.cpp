@@ -369,8 +369,8 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
 
     for (auto it : layers) {
       const std::string& layerName = it->name();
-      // 跳过选中边框，继续检查后续图层
-      if (layerName == "__SELECTION_BORDER__") {
+      // 跳过选中边框和多选边框，继续检查后续图层
+      if (layerName == "__SELECTION_BORDER__" || layerName == "__MULTI_SELECTION_BORDER__") {
         continue;
       }
       
@@ -514,7 +514,8 @@ bool TGFXBaseView::resetHighlightLayer() {
 
 
 bool TGFXBaseView::resetMoveLayers() {
-  if (moveLayers.empty()) {
+  // 多选模式和单选模式都需要重置
+  if (moveLayers.empty() && !isMultiSelection) {
     return false;
   }
 
@@ -522,6 +523,31 @@ bool TGFXBaseView::resetMoveLayers() {
     return false;
   }
 
+  // 处理多选模式
+  if (isMultiSelection && !selectedLayers.empty()) {
+    // 重新显示选中框和角控制器
+    if (latestSelectedLayer) {
+      latestSelectedLayer->setVisible(true);
+    }
+    for (auto& handle : cornerHandles) {
+      if (handle) {
+        handle->setVisible(true);
+      }
+    }
+    // 重新显示内部高亮
+    for (auto& highlight : tempHighlightLayers) {
+      if (highlight) {
+        highlight->setVisible(true);
+      }
+    }
+    
+    // 标记移动结束
+    isMoving = false;
+    appHost->markDirty();
+    return true;
+  }
+
+  // 处理单选模式（原有逻辑）
   // 移动结束后，重新显示并更新高亮和选中效果的位置
   if (latestHighlightedLayer && !moveLayers.empty()) {
     // 优先使用选中目标的全局矩阵；若无选中目标则回退到移动的首层
@@ -609,6 +635,12 @@ bool TGFXBaseView::selectMoveLayer(float pointX, float pointY) {
 }
 
 void TGFXBaseView::moveHighlightLayer(float deltaX, float deltaY) {
+  // 优先处理多选移动
+  if (isMultiSelection && !selectedLayers.empty()) {
+    moveMultiSelection(deltaX, deltaY);
+    return;
+  }
+  
   if (moveLayers.empty()) {
     return;
   }
@@ -1082,6 +1114,12 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
   printf("[选中调试] 原始检测到 %zu 个图层，坐标(%.2f, %.2f)\n", layers.size(), x, y);
   auto rootLayer = appHost->displayList.root();
   printf("[选中调试] 当前根图层地址: %p\n", (void*)rootLayer);
+  
+  // ========== 新增：如果当前是多选模式，清空多选状态 ==========
+  if (isMultiSelection) {
+    printf("[选中调试] 退出多选模式，进入单选模式\n");
+    clearMultiSelection();
+  }
   
   // 先输出原始图层信息
   for (size_t i = 0; i < layers.size(); i++) {
@@ -2234,6 +2272,7 @@ InteractionZone TGFXBaseView::detectMouseInteractionZone(float x, float y) {
 }
 
 bool TGFXBaseView::isPointInCornerHandle(float x, float y) {
+  // 多选模式下也可以使用角控制器
   if (cornerHandles.empty()) return false;
   
   // 检查每个角控制器
@@ -2277,6 +2316,22 @@ bool TGFXBaseView::isPointInSelectedLayer(float x, float y) {
 }
 
 bool TGFXBaseView::isPointInSelectionBorder(float x, float y) {
+  // 多选模式下，检查多选边框
+  if (isMultiSelection && !selectedLayers.empty() && latestSelectedLayer) {
+    // 使用多选边框进行检测
+    auto bounds = calculateAxisAlignedBoundingBox();
+    
+    // 检查是否在边框附近（但不在内部）
+    float lineWidth = s_highlightLineWidth / lastZoom;
+    float tolerance = lineWidth * 2.0f;
+    
+    auto expandedBounds = bounds;
+    expandedBounds.outset(tolerance, tolerance);
+    
+    return expandedBounds.contains(x, y) && !bounds.contains(x, y);
+  }
+  
+  // 单选模式
   if (!selectedTargetLayer) return false;
   
   // 获取选中图层的边界
@@ -2480,6 +2535,637 @@ bool TGFXBaseView::isPointOnControlLayerBorder(float x, float y, std::shared_ptr
   
   // printf("[DEBUG] isPointOnControlLayerBorder: 未知控制图层类型，返回 false\n");
   return false;
+}
+
+// ========== 框选功能实现 ==========
+
+void TGFXBaseView::startBoxSelection(float worldX, float worldY) {
+  printf("[框选] 开始框选: (%.2f, %.2f)\n", worldX, worldY);
+  
+  isBoxSelecting = true;
+  boxSelectStart = tgfx::Point::Make(worldX, worldY);
+  boxSelectEnd = boxSelectStart;
+  
+  // 创建框选框图层
+  selectionBoxLayer = tgfx::ShapeLayer::Make();
+  selectionBoxLayer->setBlendMode(tgfx::BlendMode::SrcOver);
+  
+  // 样式：绿色边框（50%透明） + 绿色填充（30%透明）
+  selectionBoxLayer->setStrokeStyle(
+    tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41, 127))  // 50%透明
+  );
+  selectionBoxLayer->setFillStyle(
+    tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41, 76))   // 30%透明
+  );
+  
+  // 线宽与高亮一致，需要根据缩放调整
+  float adjustedLineWidth = lastZoom > 0 ? s_highlightLineWidth / lastZoom : s_highlightLineWidth;
+  selectionBoxLayer->setLineWidth(adjustedLineWidth);
+  selectionBoxLayer->setStrokeAlign(tgfx::StrokeAlign::Inside);
+  selectionBoxLayer->setName("__BOX_SELECTION__");
+  
+  // 添加到根图层（不需要变换，直接使用世界坐标）
+  auto rootLayer = appHost->displayList.root();
+  if (rootLayer) {
+    rootLayer->addChild(selectionBoxLayer);
+  }
+  
+  appHost->markDirty();
+}
+
+void TGFXBaseView::updateBoxSelection(float worldX, float worldY) {
+  if (!isBoxSelecting || !selectionBoxLayer) return;
+  
+  boxSelectEnd = tgfx::Point::Make(worldX, worldY);
+  
+  // 计算矩形（左上角、右下角）
+  float left = std::min(boxSelectStart.x, boxSelectEnd.x);
+  float top = std::min(boxSelectStart.y, boxSelectEnd.y);
+  float right = std::max(boxSelectStart.x, boxSelectEnd.x);
+  float bottom = std::max(boxSelectStart.y, boxSelectEnd.y);
+  
+  // 更新框选框路径
+  tgfx::Path boxPath;
+  boxPath.addRect(tgfx::Rect::MakeLTRB(left, top, right, bottom));
+  selectionBoxLayer->setPath(boxPath);
+  
+  // 检测框内图层并实时高亮
+  auto rect = tgfx::Rect::MakeLTRB(left, top, right, bottom);
+  auto layersInBox = getLayersInRect(rect);
+  
+  // 清除旧的临时高亮
+  for (auto& highlight : tempHighlightLayers) {
+    if (highlight && highlight->parent()) {
+      highlight->removeFromParent();
+    }
+  }
+  tempHighlightLayers.clear();
+  
+  // 创建新的临时高亮（复用高亮样式）
+  for (auto& layer : layersInBox) {
+    auto highlight = createTempHighlight(layer);
+    if (highlight) {
+      tempHighlightLayers.push_back(highlight);
+    }
+  }
+  
+  appHost->markDirty();
+}
+
+void TGFXBaseView::endBoxSelection() {
+  if (!isBoxSelecting) return;
+  
+  printf("[框选] 结束框选\n");
+  
+  // 计算最终选择矩形
+  float left = std::min(boxSelectStart.x, boxSelectEnd.x);
+  float top = std::min(boxSelectStart.y, boxSelectEnd.y);
+  float right = std::max(boxSelectStart.x, boxSelectEnd.x);
+  float bottom = std::max(boxSelectStart.y, boxSelectEnd.y);
+  auto rect = tgfx::Rect::MakeLTRB(left, top, right, bottom);
+  
+  // 获取框内图层
+  selectedLayers = getLayersInRect(rect);
+  
+  // 清理框选框和临时高亮
+  if (selectionBoxLayer) {
+    selectionBoxLayer->removeFromParent();
+    selectionBoxLayer.reset();
+  }
+  
+  for (auto& highlight : tempHighlightLayers) {
+    if (highlight && highlight->parent()) {
+      highlight->removeFromParent();
+    }
+  }
+  tempHighlightLayers.clear();
+  
+  isBoxSelecting = false;
+  
+  // 如果选中了0个图层，直接返回
+  if (selectedLayers.empty()) {
+    printf("[框选] 未选中任何图层\n");
+    appHost->markDirty();
+    return;
+  }
+  
+  printf("[框选] 选中 %zu 个图层\n", selectedLayers.size());
+  
+  // 如果只选中1个图层，转为单选模式
+  if (selectedLayers.size() == 1) {
+    printf("[框选] 只选中1个图层，转为单选模式\n");
+    auto layer = selectedLayers[0];
+    selectedLayers.clear();
+    isMultiSelection = false;
+    
+    // 直接创建单选效果（不调用selectLayerAndCheckRedraw，因为那个函数需要坐标参数）
+    resetSelectedLayer();
+    
+    // 创建选中边框
+    auto selectionBorder = tgfx::ShapeLayer::Make();
+    selectionBorder->setBlendMode(tgfx::BlendMode::SrcOver);
+    auto rectPath = tgfx::Path();
+    rectPath.addRect(layer->getBounds(nullptr, true));
+    if (layer->mask() != nullptr) {
+      tgfx::Path maskPath;
+      maskPath.addRect(layer->mask()->getBounds());
+      selectionBorder->setPath(maskPath);
+    } else {
+      selectionBorder->setPath(rectPath);
+    }
+    selectionBorder->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41, 204)));
+
+    auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
+    float scaleX = std::sqrt(globalMatrix.getScaleX() * globalMatrix.getScaleX() + 
+                             globalMatrix.getSkewY() * globalMatrix.getSkewY());
+    float scaleY = std::sqrt(globalMatrix.getSkewX() * globalMatrix.getSkewX() + 
+                             globalMatrix.getScaleY() * globalMatrix.getScaleY());
+    float layerAvgScale = (scaleX + scaleY) / 2.0f;
+    float totalScale = layerAvgScale * lastZoom;
+    float adjustedLineWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
+    
+    selectionBorder->setLineWidth(adjustedLineWidth);
+    selectionBorder->setStrokeAlign(tgfx::StrokeAlign::Inside);
+    selectionBorder->setMatrix(globalMatrix);
+    selectionBorder->setName("__SELECTION_BORDER__");
+
+    auto rootLayer = appHost->displayList.root();
+    if (rootLayer) {
+      rootLayer->addChild(selectionBorder);
+    }
+
+    latestSelectedLayer = selectionBorder;
+    selectedTargetLayer = layer;
+
+    // 创建四个角控制器
+    createCornerHandles(layer);
+    
+    appHost->markDirty();
+    return;
+  }
+  
+  // 标记进入多选模式
+  isMultiSelection = true;
+  
+  // 创建多选选中框（轴对齐包围盒）
+  createMultiSelectionBorder();
+  
+  appHost->markDirty();
+}
+
+// 获取矩形内的所有图层（递归搜索所有图层，排除父子关系）
+std::vector<std::shared_ptr<tgfx::Layer>> TGFXBaseView::getLayersInRect(const tgfx::Rect& rect) {
+  std::vector<std::shared_ptr<tgfx::Layer>> result;
+  std::unordered_set<tgfx::Layer*> parentSet;  // 用于记录已选中图层的父节点
+  
+  if (!appHost) return result;
+  
+  auto root = appHost->displayList.root();
+  if (!root) return result;
+  
+  // 第一遍：收集所有候选图层
+  std::vector<std::shared_ptr<tgfx::Layer>> candidates;
+  
+  std::function<void(std::shared_ptr<tgfx::Layer>)> traverseLayers = 
+    [&](std::shared_ptr<tgfx::Layer> layer) {
+      if (!layer) return;
+      
+      // 跳过根图层本身（使用 .get() 比较原始指针）
+      if (layer.get() == root) {
+        // 只遍历子节点，不添加根图层
+        for (auto& child : layer->children()) {
+          traverseLayers(child);
+        }
+        return;
+      }
+      
+      // 跳过控制图层（包括多选边框）
+      const std::string& name = layer->name();
+      if (name == "__CORNER_HANDLE__" || 
+          name == "__SELECTION_BORDER__" ||
+          name == "__HIGHLIGHT__" ||
+          name == "__BOX_SELECTION__" ||
+          name == "__TEMP_HIGHLIGHT__" ||
+          name == "__MULTI_SELECTION_BORDER__") {
+        return;
+      }
+      
+      // 获取图层在世界坐标的边界
+      auto layerBounds = layer->getBounds(root, true);
+      
+      // 判断是否与框选矩形相交
+      if (tgfx::Rect::Intersects(rect, layerBounds)) {
+        candidates.push_back(layer);
+      }
+      
+      // 递归遍历子图层
+      for (auto& child : layer->children()) {
+        traverseLayers(child);
+      }
+    };
+  
+  // 从根图层的子节点开始遍历
+  for (auto& child : root->children()) {
+    traverseLayers(child);
+  }
+  
+  // 第二遍：构建父节点集合
+  for (auto& layer : candidates) {
+    auto parent = layer->parent();
+    while (parent && parent != root) {
+      parentSet.insert(parent);
+      parent = parent->parent();
+    }
+  }
+  
+  // 第三遍：过滤掉子图层（只保留最顶层的父图层）
+  for (auto& layer : candidates) {
+    // 如果该图层不是任何已选图层的父节点，则保留
+    if (parentSet.find(layer.get()) == parentSet.end()) {
+      result.push_back(layer);
+    }
+  }
+  
+  printf("[框选] 检测到 %zu 个候选图层，过滤后剩余 %zu 个顶层图层\n", candidates.size(), result.size());
+  for (auto& layer : result) {
+    printf("[框选] 选中图层: '%s' (地址:%p)\n", layer->name().c_str(), (void*)layer.get());
+  }
+  
+  return result;
+}
+
+// 计算轴对齐包围盒（AABB）
+tgfx::Rect TGFXBaseView::calculateAxisAlignedBoundingBox() {
+  if (selectedLayers.empty()) return tgfx::Rect::MakeEmpty();
+  
+  auto root = appHost->displayList.root();
+  if (!root) return tgfx::Rect::MakeEmpty();
+  
+  // 初始化极值
+  float minX = std::numeric_limits<float>::max();
+  float minY = std::numeric_limits<float>::max();
+  float maxX = std::numeric_limits<float>::lowest();
+  float maxY = std::numeric_limits<float>::lowest();
+  
+  // 遍历每个选中图层
+  for (auto& layer : selectedLayers) {
+    // 获取图层的4个顶点（世界坐标）
+    auto localBounds = layer->getBounds(nullptr, true);
+    auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
+    
+    // 4个角的本地坐标
+    std::vector<tgfx::Point> corners = {
+      tgfx::Point::Make(localBounds.left, localBounds.top),
+      tgfx::Point::Make(localBounds.right, localBounds.top),
+      tgfx::Point::Make(localBounds.right, localBounds.bottom),
+      tgfx::Point::Make(localBounds.left, localBounds.bottom)
+    };
+    
+    // 转换到世界坐标并找极值
+    for (auto& corner : corners) {
+      tgfx::Point worldPoint;
+      globalMatrix.mapXY(corner.x, corner.y, &worldPoint);
+      
+      minX = std::min(minX, worldPoint.x);
+      minY = std::min(minY, worldPoint.y);
+      maxX = std::max(maxX, worldPoint.x);
+      maxY = std::max(maxY, worldPoint.y);
+    }
+  }
+  
+  return tgfx::Rect::MakeLTRB(minX, minY, maxX, maxY);
+}
+
+// 创建多选选中框
+void TGFXBaseView::createMultiSelectionBorder() {
+  if (selectedLayers.empty()) return;
+  
+  // ⚠️ 不清理旧的选中效果，因为多选模式下不应该有单选状态
+  // resetSelectedLayer(); // 删除这行
+  
+  // 计算轴对齐包围盒（水平矩形）
+  auto aabb = calculateAxisAlignedBoundingBox();
+  
+  // 创建选中边框
+  auto selectionBorder = tgfx::ShapeLayer::Make();
+  selectionBorder->setBlendMode(tgfx::BlendMode::SrcOver);
+  
+  tgfx::Path rectPath;
+  rectPath.addRect(aabb);
+  selectionBorder->setPath(rectPath);
+  
+  selectionBorder->setStrokeStyle(
+    tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41, 204))
+  );
+  
+  // 线宽自适应
+  float adjustedLineWidth = lastZoom > 0 ? s_highlightLineWidth / lastZoom : s_highlightLineWidth;
+  selectionBorder->setLineWidth(adjustedLineWidth);
+  selectionBorder->setStrokeAlign(tgfx::StrokeAlign::Inside);
+  selectionBorder->setName("__MULTI_SELECTION_BORDER__");  // 使用独立的名称，避免被高亮检测
+  
+  // 关键：不设置矩阵，因为AABB已经在世界坐标系中了
+  selectionBorder->setMatrix(tgfx::Matrix::I());
+  
+  auto rootLayer = appHost->displayList.root();
+  if (rootLayer) {
+    rootLayer->addChild(selectionBorder);
+  }
+  
+  latestSelectedLayer = selectionBorder;
+  
+  // 为每个选中的图层创建高亮边框（类似临时高亮）
+  for (auto& layer : selectedLayers) {
+    auto highlight = createTempHighlight(layer);
+    if (highlight) {
+      tempHighlightLayers.push_back(highlight);
+    }
+  }
+  
+  // 创建角控制器（基于AABB）
+  createCornerHandlesForAABB(aabb);
+}
+
+// 基于AABB创建角控制器
+void TGFXBaseView::createCornerHandlesForAABB(const tgfx::Rect& aabb) {
+  removeCornerHandles();
+  
+  auto rootLayer = appHost->displayList.root();
+  if (!rootLayer) return;
+  
+  float adjustedLineWidth = lastZoom > 0 ? s_highlightLineWidth / lastZoom : s_highlightLineWidth;
+  float handleSize = adjustedLineWidth * s_handleSizeFactor;
+  
+  // 4个角（世界坐标）
+  std::vector<tgfx::Point> corners = {
+    tgfx::Point::Make(aabb.left, aabb.top),
+    tgfx::Point::Make(aabb.right, aabb.top),
+    tgfx::Point::Make(aabb.right, aabb.bottom),
+    tgfx::Point::Make(aabb.left, aabb.bottom)
+  };
+  
+  for (auto& corner : corners) {
+    auto handle = tgfx::ShapeLayer::Make();
+    
+    tgfx::Path path;
+    path.addRect(tgfx::Rect::MakeXYWH(
+      corner.x - handleSize/2, 
+      corner.y - handleSize/2, 
+      handleSize, 
+      handleSize
+    ));
+    handle->setPath(path);
+    
+    handle->setFillStyle(tgfx::SolidColor::Make(tgfx::Color::White()));
+    handle->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41)));
+    handle->setLineWidth(adjustedLineWidth);
+    handle->setStrokeAlign(tgfx::StrokeAlign::Outside);
+    
+    // 关键：角控制器也不需要变换矩阵
+    handle->setMatrix(tgfx::Matrix::I());
+    handle->setName("__CORNER_HANDLE__");
+    
+    rootLayer->addChild(handle);
+    cornerHandles.push_back(handle);
+  }
+}
+
+// 更新多选选中框
+void TGFXBaseView::updateMultiSelectionBorder() {
+  if (selectedLayers.empty() || !latestSelectedLayer) return;
+  
+  // 重新计算AABB
+  auto aabb = calculateAxisAlignedBoundingBox();
+  
+  // 更新选中边框路径
+  auto shapeLayer = std::static_pointer_cast<tgfx::ShapeLayer>(latestSelectedLayer);
+  tgfx::Path rectPath;
+  rectPath.addRect(aabb);
+  shapeLayer->setPath(rectPath);
+  
+  // 更新内部图层高亮
+  for (auto& highlight : tempHighlightLayers) {
+    if (highlight && highlight->parent()) {
+      highlight->removeFromParent();
+    }
+  }
+  tempHighlightLayers.clear();
+  
+  for (auto& layer : selectedLayers) {
+    auto highlight = createTempHighlight(layer);
+    if (highlight) {
+      tempHighlightLayers.push_back(highlight);
+    }
+  }
+  
+  // 更新角控制器位置
+  updateCornerHandlesForAABB(aabb);
+}
+
+// 更新角控制器位置（基于AABB）
+void TGFXBaseView::updateCornerHandlesForAABB(const tgfx::Rect& aabb) {
+  if (cornerHandles.size() != 4) {
+    // 重建角控制器
+    createCornerHandlesForAABB(aabb);
+    return;
+  }
+  
+  float adjustedLineWidth = lastZoom > 0 ? s_highlightLineWidth / lastZoom : s_highlightLineWidth;
+  float handleSize = adjustedLineWidth * s_handleSizeFactor;
+  
+  std::vector<tgfx::Point> corners = {
+    tgfx::Point::Make(aabb.left, aabb.top),
+    tgfx::Point::Make(aabb.right, aabb.top),
+    tgfx::Point::Make(aabb.right, aabb.bottom),
+    tgfx::Point::Make(aabb.left, aabb.bottom)
+  };
+  
+  for (size_t i = 0; i < 4; ++i) {
+    auto shapeHandle = std::static_pointer_cast<tgfx::ShapeLayer>(cornerHandles[i]);
+    const auto& corner = corners[i];
+    
+    tgfx::Path path;
+    path.addRect(tgfx::Rect::MakeXYWH(
+      corner.x - handleSize/2,
+      corner.y - handleSize/2,
+      handleSize,
+      handleSize
+    ));
+    shapeHandle->setPath(path);
+    shapeHandle->setLineWidth(adjustedLineWidth);
+  }
+}
+
+// 清空多选状态
+void TGFXBaseView::clearMultiSelection() {
+  selectedLayers.clear();
+  isMultiSelection = false;
+  
+  // 清理多选边框
+  if (latestSelectedLayer) {
+    latestSelectedLayer->removeFromParent();
+    latestSelectedLayer.reset();
+  }
+  
+  // 清理内部图层高亮
+  for (auto& highlight : tempHighlightLayers) {
+    if (highlight && highlight->parent()) {
+      highlight->removeFromParent();
+    }
+  }
+  tempHighlightLayers.clear();
+  
+  // 清理角控制器
+  removeCornerHandles();
+}
+
+// 创建临时高亮
+std::shared_ptr<tgfx::ShapeLayer> TGFXBaseView::createTempHighlight(std::shared_ptr<tgfx::Layer> layer) {
+  if (!layer) return nullptr;
+  
+  auto highlight = tgfx::ShapeLayer::Make();
+  highlight->setBlendMode(tgfx::BlendMode::SrcOver);
+  
+  // 获取图层边界
+  auto bounds = layer->getBounds(nullptr, true);
+  
+  tgfx::Path rectPath;
+  rectPath.addRect(bounds);
+  highlight->setPath(rectPath);
+  
+  // 使用与高亮一致的样式（绿色边框）
+  highlight->setStrokeStyle(
+    tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41, 204))
+  );
+  
+  float adjustedLineWidth = lastZoom > 0 ? s_highlightLineWidth / lastZoom : s_highlightLineWidth;
+  highlight->setLineWidth(adjustedLineWidth);
+  highlight->setStrokeAlign(tgfx::StrokeAlign::Inside);
+  highlight->setName("__TEMP_HIGHLIGHT__");
+  
+  // 设置与图层相同的变换矩阵
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
+  highlight->setMatrix(globalMatrix);
+  
+  auto rootLayer = appHost->displayList.root();
+  if (rootLayer) {
+    rootLayer->addChild(highlight);
+  }
+  
+  return highlight;
+}
+
+// 多选移动（参考单选的移动逻辑）
+void TGFXBaseView::moveMultiSelection(float deltaX, float deltaY) {
+  if (selectedLayers.empty()) return;
+  
+  // 标记进入移动状态
+  isMoving = true;
+  
+  // 移动时隐藏选中框和角控制器（但不删除）
+  if (latestSelectedLayer) {
+    latestSelectedLayer->setVisible(false);
+  }
+  for (auto& handle : cornerHandles) {
+    if (handle) {
+      handle->setVisible(false);
+    }
+  }
+  // 隐藏内部高亮
+  for (auto& highlight : tempHighlightLayers) {
+    if (highlight) {
+      highlight->setVisible(false);
+    }
+  }
+  
+  // 遍历每个图层，应用相同的世界坐标增量
+  for (auto& layer : selectedLayers) {
+    // 将世界坐标增量转换为图层本地坐标
+    auto localDelta = CoordinateTransformer::screenDeltaToLayerDelta(
+      deltaX, deltaY, lastZoom, layer
+    );
+    
+    auto matrix = layer->matrix();
+    matrix.preTranslate(localDelta.x, localDelta.y);
+    layer->setMatrix(matrix);
+  }
+  
+  // 更新AABB和视觉效果（但保持隐藏状态）
+  updateMultiSelectionBorder();
+  
+  appHost->markDirty();
+}
+
+// 多选旋转
+void TGFXBaseView::rotateMultiSelection(float deltaAngle) {
+  if (selectedLayers.empty()) return;
+  
+  // 计算旋转中心（AABB的几何中心）
+  auto aabb = calculateAxisAlignedBoundingBox();
+  tgfx::Point rotationCenter = tgfx::Point::Make(aabb.centerX(), aabb.centerY());
+  
+  // 遍历每个图层，绕统一中心点旋转
+  for (auto& layer : selectedLayers) {
+    // 将世界旋转中心转换为图层本地坐标
+    auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
+    tgfx::Matrix inverseMatrix = globalMatrix;
+    if (!inverseMatrix.invert(&inverseMatrix)) {
+      continue;  // 无法求逆，跳过该图层
+    }
+    
+    tgfx::Point localRotationCenter;
+    inverseMatrix.mapXY(rotationCenter.x, rotationCenter.y, &localRotationCenter);
+    
+    // 在本地坐标系中绕中心旋转
+    auto matrix = layer->matrix();
+    float angleDegrees = deltaAngle * 180.0f / static_cast<float>(M_PI);
+    matrix.preRotate(angleDegrees, localRotationCenter.x, localRotationCenter.y);
+    layer->setMatrix(matrix);
+  }
+  
+  // 核心：旋转后重新计算AABB（会变大）
+  updateMultiSelectionBorder();
+  
+  appHost->markDirty();
+}
+
+// 多选缩放
+void TGFXBaseView::scaleMultiSelection(float scaleX, float scaleY, float pivotX, float pivotY) {
+  if (selectedLayers.empty()) return;
+  
+  // pivotX, pivotY 是世界坐标系的缩放中心点（AABB中心或对角点）
+  
+  for (auto& layer : selectedLayers) {
+    // 将世界缩放中心转换为图层本地坐标
+    auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(layer);
+    tgfx::Matrix inverseMatrix = globalMatrix;
+    if (!inverseMatrix.invert(&inverseMatrix)) {
+      continue;  // 无法求逆，跳过该图层
+    }
+    
+    // 世界缩放中心 → 图层本地坐标
+    tgfx::Point localPivot;
+    inverseMatrix.mapXY(pivotX, pivotY, &localPivot);
+    
+    // 在本地坐标系中应用缩放
+    auto matrix = layer->matrix();
+    matrix.preScale(scaleX, scaleY, localPivot.x, localPivot.y);
+    layer->setMatrix(matrix);
+  }
+  
+  // 缩放后重新计算AABB
+  updateMultiSelectionBorder();
+  
+  appHost->markDirty();
+}
+
+// 查询方法
+int TGFXBaseView::getSelectedLayersCount() const {
+  return static_cast<int>(selectedLayers.size());
+}
+
+bool TGFXBaseView::isInMultiSelectionMode() const {
+  return isMultiSelection;
 }
 
 }  // namespace displaylist

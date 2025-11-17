@@ -172,6 +172,20 @@ class TGFXBaseView {
   // 选中图层检测方法（需要暴露给 JavaScript）
   bool isPointInSelectedLayer(float x, float y);
   bool isPointInSelectionBorder(float x, float y);
+  
+  // ========== 框选功能相关方法 ==========
+  void startBoxSelection(float worldX, float worldY);
+  void updateBoxSelection(float worldX, float worldY);
+  void endBoxSelection();
+  
+  // 多选操作
+  void moveMultiSelection(float deltaX, float deltaY);
+  void rotateMultiSelection(float deltaAngle);
+  void scaleMultiSelection(float scaleX, float scaleY, float pivotX, float pivotY);
+  
+  // 查询方法
+  int getSelectedLayersCount() const;
+  bool isInMultiSelectionMode() const;
 
  protected:
   std::shared_ptr<hello2d::AppHost> appHost;
@@ -206,6 +220,22 @@ class TGFXBaseView {
   std::shared_ptr<tgfx::Layer> selectedTargetLayer = nullptr;
   std::vector<std::shared_ptr<tgfx::Layer>> cornerHandles = {};
   bool isMoving = false;
+  
+  // ========== 框选功能相关成员变量 ==========
+  // 框选状态
+  bool isBoxSelecting = false;
+  tgfx::Point boxSelectStart;   // 起点（世界坐标）
+  tgfx::Point boxSelectEnd;     // 终点（世界坐标）
+  
+  // 框选框图层（拖动中临时显示）
+  std::shared_ptr<tgfx::ShapeLayer> selectionBoxLayer = nullptr;
+  
+  // 框内图层临时高亮（拖动中实时显示）
+  std::vector<std::shared_ptr<tgfx::ShapeLayer>> tempHighlightLayers;
+  
+  // 多选状态
+  std::vector<std::shared_ptr<tgfx::Layer>> selectedLayers;  // 多选的图层数组
+  bool isMultiSelection = false;  // 标记当前是否为多选模式
 
   // 保存当前渲染设置，确保在重新构建layer tree时能够重新应用
   int currentRenderMode = 0;  // 0=Direct, 1=Partial, 2=Tiled
@@ -257,5 +287,22 @@ class TGFXBaseView {
   
   // 控制图层边框检测辅助方法
   bool isPointOnControlLayerBorder(float x, float y, std::shared_ptr<tgfx::Layer> controlLayer);
+  
+  // ========== 框选功能辅助方法 ==========
+  // 图层检测
+  std::vector<std::shared_ptr<tgfx::Layer>> getLayersInRect(const tgfx::Rect& rect);
+  
+  // AABB计算
+  tgfx::Rect calculateAxisAlignedBoundingBox();
+  
+  // 多选边框管理
+  void updateMultiSelectionBorder();
+  void createMultiSelectionBorder();
+  void clearMultiSelection();
+  void createCornerHandlesForAABB(const tgfx::Rect& aabb);
+  void updateCornerHandlesForAABB(const tgfx::Rect& aabb);
+  
+  // 临时高亮
+  std::shared_ptr<tgfx::ShapeLayer> createTempHighlight(std::shared_ptr<tgfx::Layer> layer);
 };
 }  // namespace displaylist

@@ -564,6 +564,88 @@ class ScaleStateManager {
 
 const scaleStateManager = ScaleStateManager.getInstance();
 
+// ========== 框选管理器 ==========
+class BoxSelectionManager {
+    private isSelecting = false;
+    private hasDragStarted = false;
+    private isPrepared = false;  // 标记是否已准备好框选（只有在点击空白区域时才为true）
+    private startScreenX = 0;
+    private startScreenY = 0;
+    private startWorldX = 0;
+    private startWorldY = 0;
+    private minDragDistance = 15;  // 15像素阈值（增加拖动距离，避免误触发）
+    private minPressTime = 200;    // 最小按压时间（毫秒）- 需要按下至少200ms才能启动框选
+    private pressStartTime = 0;    // 按下时的时间戳
+
+    // 记录初始点击位置（只在点击空白区域时调用）
+    onMouseDown(screenX: number, screenY: number, worldX: number, worldY: number): void {
+        this.startScreenX = screenX;
+        this.startScreenY = screenY;
+        this.startWorldX = worldX;
+        this.startWorldY = worldY;
+        this.hasDragStarted = false;
+        this.isPrepared = true;  // 标记已准备好框选
+        this.pressStartTime = Date.now();  // 记录按下时间
+        console.log('[框选管理器] 准备框选，起点：', screenX, screenY);
+    }
+
+    // 判断是否应该启动框选
+    onMouseMove(currentScreenX: number, currentScreenY: number, worldX: number, worldY: number, shareData: ShareData): void {
+        // 如果没有准备好框选（例如点击的是图层），不启动框选
+        if (!this.isPrepared) {
+            return;
+        }
+        
+        const dx = currentScreenX - this.startScreenX;
+        const dy = currentScreenY - this.startScreenY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const pressDuration = Date.now() - this.pressStartTime;
+
+        // 需要同时满足距离和时间条件
+        if (!this.hasDragStarted && distance > this.minDragDistance && pressDuration > this.minPressTime) {
+            // 超过阈值，启动框选
+            this.hasDragStarted = true;
+            this.isSelecting = true;
+            (shareData.tgfxBaseView as any).startBoxSelection(this.startWorldX, this.startWorldY);
+            console.log(`[框选] 启动框选，起点：(${this.startWorldX.toFixed(2)}, ${this.startWorldY.toFixed(2)})，按压时长：${pressDuration}ms`);
+        }
+
+        if (this.isSelecting) {
+            // 更新框选框
+            (shareData.tgfxBaseView as any).updateBoxSelection(worldX, worldY);
+        }
+    }
+
+    // 鼠标抬起
+    onMouseUp(shareData: ShareData): void {
+        if (this.isSelecting) {
+            (shareData.tgfxBaseView as any).endBoxSelection();
+            console.log('[框选] 结束框选');
+        }
+
+        this.isSelecting = false;
+        this.hasDragStarted = false;
+        this.isPrepared = false;  // 重置准备状态
+    }
+
+    isBoxSelecting(): boolean {
+        return this.isSelecting;
+    }
+
+    reset(): void {
+        this.isSelecting = false;
+        this.hasDragStarted = false;
+        this.isPrepared = false;
+        this.startScreenX = 0;
+        this.startScreenY = 0;
+        this.startWorldX = 0;
+        this.startWorldY = 0;
+        this.pressStartTime = 0;
+    }
+}
+
+const boxSelectionManager = new BoxSelectionManager();
+
 class RotationStateManager {
     private static instance: RotationStateManager;
     private isRotating = false;
@@ -988,8 +1070,25 @@ export class GestureManager {
             return;
         }
 
-        // 处理普通拖动移动
+        // 处理普通拖动移动（包括框选）
         if (isMouseDown) {
+            const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
+            
+            // 检查是否应该启动框选或更新框选
+            boxSelectionManager.onMouseMove(
+                clientXY.clientX, clientXY.clientY,
+                worldCoords.worldX, worldCoords.worldY,
+                shareData
+            );
+            
+            if (boxSelectionManager.isBoxSelecting()) {
+                // 框选模式，不执行普通移动
+                shareData.tgfxBaseView?.markDirty();
+                animationLoop(shareData);
+                return;
+            }
+            
+            // 普通拖动移动逻辑
             hasMoved = true;
 
             const screenDeltaX = clientXY.clientX - lastPointX;
@@ -1130,12 +1229,29 @@ export class GestureManager {
 
             // 默认的选择和移动逻辑
             shareData.tgfxBaseView?.resetHighlightLayer();
-            if (shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY)) {
+            
+            const hasSelectedLayer = shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY);
+            
+            if (hasSelectedLayer) {
+                // 选中了图层，正常处理，不启动框选
+                lastPointX = clientXY.clientX;
+                lastPointY = clientXY.clientY;
+                isMouseDown = true;
+                hasMoved = false;
+                console.log('[鼠标按下] 选中图层，不启动框选');
+            } else {
+                // 未选中图层，点击空白区域，准备框选
+                console.log('[鼠标按下] 点击空白区域，准备框选');
+                boxSelectionManager.onMouseDown(
+                    clientXY.clientX, clientXY.clientY,
+                    worldCoords.worldX, worldCoords.worldY
+                );
                 lastPointX = clientXY.clientX;
                 lastPointY = clientXY.clientY;
                 isMouseDown = true;
                 hasMoved = false;
             }
+            
             shareData.tgfxBaseView?.markDirty();
             animationLoop(shareData);
         }
@@ -1152,7 +1268,7 @@ export class GestureManager {
                 // 获取当前4个角的坐标
                 const cornersVector = (shareData.tgfxBaseView as any).getSelectedLayerCorners();
                 if (cornersVector && typeof cornersVector.size === 'function' && cornersVector.size() >= 8) {
-                    const corners = [];
+                    const corners: number[] = [];
                     for (let i = 0; i < 8; i++) {
                         corners.push(cornersVector.get(i));
                     }
@@ -1185,6 +1301,16 @@ export class GestureManager {
                 animationLoop(shareData);
                 return;
             }
+            
+            // 处理框选结束
+            if (boxSelectionManager.isBoxSelecting()) {
+                boxSelectionManager.onMouseUp(shareData);
+                shareData.tgfxBaseView?.markDirty();
+                animationLoop(shareData);
+                isMouseDown = false;
+                hasMoved = false;
+                return;
+            }
 
             if (!hasMoved) {
                 // 单击事件：调用选中方法
@@ -1195,7 +1321,7 @@ export class GestureManager {
                 const selected = shareData.tgfxBaseView?.selectLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
                 console.log(`[JS调试] 选中结果：${selected}`);
             } else {
-                shareData.tgfxBaseView.resetMoveLayers();
+                shareData.tgfxBaseView?.resetMoveLayers();
             }
 
             // 重置状态
