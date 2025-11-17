@@ -82,6 +82,7 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("getOppositeCornerIndex", &TGFXBaseView::getOppositeCornerIndex)
       .function("getOppositeCornerWorldCoords", &TGFXBaseView::getOppositeCornerWorldCoords)
       .function("debugCornerAndOppositeInfo", &TGFXBaseView::debugCornerAndOppositeInfo)
+      .function("getSelectedLayerFlipState", &TGFXBaseView::getSelectedLayerFlipState)
       
       ;
 

@@ -140,6 +140,10 @@ class TGFXBaseView {
   // 调试方法：打印所有角和对角点的详细信息
   void debugCornerAndOppositeInfo();
   
+  // 获取选中图层的翻转状态
+  // 返回：[isFlippedX (0或1), isFlippedY (0或1)]，如果没有选中图层则返回空数组
+  std::vector<float> getSelectedLayerFlipState();
+  
   // 旋转区域检测
   bool isPointInRotateZone(float x, float y);
 

@@ -33,7 +33,6 @@ class CursorFactory {
     // 创建方向箭头光标（支持旋转）
     private createArrowCursor(direction: string, rotationAngle: number = 0): string {
         // 基础方向对应的角度（度）- 箭头指向中心
-        // 注意：这些角度是相对于标准的未旋转坐标系的
         const baseAngles: { [key: string]: number } = {
             'nw-resize': 180,   // 左上角 → 向右指向中心
             'ne-resize': -90,   // 右上角 → 向下指向中心
@@ -41,11 +40,8 @@ class CursorFactory {
             'sw-resize': 90     // 左下角 → 向上指向中心
         };
 
-        let baseAngle = baseAngles[direction] || 0;
-
-        // 对于旋转后的图层，光标方向应该直接跟随旋转角度
-        // 不再需要额外的翻转修正（因为我们禁用了翻转检测）
-        const totalAngle = (baseAngle + rotationAngle) % 360;
+        const baseAngle = baseAngles[direction] || 0;
+        const totalAngle = baseAngle + rotationAngle;
 
         // 创建旋转后的箭头 SVG
         const svg = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -183,10 +179,28 @@ class CursorDetectionCache {
 
                 // 只要在角控制器检测范围内（距离 < 8 像素），就显示缩放光标
                 if (distance < 8) {
-                    console.log(`[光标检测] 检测到角：${position}，距离：${distance.toFixed(2)}`);
+                    // 获取检测到的位置对应的索引
+                    const cornerIndexMap: { [key: string]: number } = {
+                        '左上角': 0, '右上角': 1, '右下角': 2, '左下角': 3
+                    };
+                    const detectedIndex = cornerIndexMap[position] ?? 0;
                     
-                    // 直接根据检测到的实际位置返回光标类型
-                    // （不需要通过角索引进行转换，因为 detectCornerPosition 已经基于屏幕坐标返回了准确位置）
+                    // 获取该位置实际对应的角名称（考虑旋转/翻转）
+                    const actualCornerName = (shareData.tgfxBaseView as any).getCornerNameByPosition(detectedIndex);
+                    
+                    // 获取翻转状态
+                    const flipStateVector = (shareData.tgfxBaseView as any).getSelectedLayerFlipState();
+                    let isFlippedX = false;
+                    let isFlippedY = false;
+                    if (flipStateVector && flipStateVector.size && flipStateVector.size() >= 2) {
+                        isFlippedX = flipStateVector.get(0) > 0.5;
+                        isFlippedY = flipStateVector.get(1) > 0.5;
+                    }
+                    
+                    console.log(`[光标检测] 检测角：${position} -> 实际位置：${actualCornerName} (索引${detectedIndex})，翻转状态：X=${isFlippedX}, Y=${isFlippedY}，距离：${distance.toFixed(2)}`);
+                    
+                    // 光标类型应该基于用户看到的位置（检测到的位置），而不是实际位置
+                    // 因为光标是给用户看的，用户看到的是变换后的视觉位置
                     switch (position) {
                         case '左上角':
                             return 'nw-resize';
@@ -197,7 +211,7 @@ class CursorDetectionCache {
                         case '右下角':
                             return 'se-resize';
                         default:
-                            return 'default'; // 如果没有匹配的角，则返回默认光标
+                            return 'nw-resize';
                     }
                 }
             }
@@ -383,7 +397,6 @@ let hasMoved = false;
 let lastPointX = 0;
 let lastPointY = 0;
 
-// 旋转状态管理
 // 缩放状态管理器
 class ScaleStateManager {
     private static instance: ScaleStateManager;
@@ -393,12 +406,6 @@ class ScaleStateManager {
     private lastDistance = 0; // 上一帧的距离
     private cornerIndex = -1; // 0:左上, 1:右上, 2:右下, 3:左下
     private oppositeCornerLocal: { x: number, y: number } | null = null; // 对角点的本地坐标（不变）
-    private isFlippedX = false; // X轴是否已翻转
-    private isFlippedY = false; // Y轴是否已翻转
-    private currentFlipState: { isFlippedX: boolean; isFlippedY: boolean } = {
-        isFlippedX: false,
-        isFlippedY: false
-    };
 
     static getInstance(): ScaleStateManager {
         if (!ScaleStateManager.instance) {
@@ -411,50 +418,24 @@ class ScaleStateManager {
         this.isScaling = true;
         this.lastPoint = { x: startX, y: startY };
         this.cachedCenter = { x: centerX, y: centerY };
-        this.cornerIndex = cornerIdx;
+        this.cornerIndex = cornerIdx;  // 存储视觉位置索引，用于翻转判断
         this.oppositeCornerLocal = { x: localX, y: localY }; // 记录本地坐标
 
-        const initialFlipX = this.checkFlipX(startX, centerX);
-        const initialFlipY = this.checkFlipY(startY, centerY);
         const deltaX = startX - centerX;
         const deltaY = startY - centerY;
-        const effectiveDeltaX = initialFlipX ? -deltaX : deltaX;
-        const effectiveDeltaY = initialFlipY ? -deltaY : deltaY;
-        this.lastDistance = Math.hypot(effectiveDeltaX, effectiveDeltaY);
-        this.isFlippedX = initialFlipX;
-        this.isFlippedY = initialFlipY;
-        this.currentFlipState = { isFlippedX: initialFlipX, isFlippedY: initialFlipY };
+        this.lastDistance = Math.hypot(deltaX, deltaY);
         
-        // 使用基于坐标位置的角名称判断
-        const actualCornerName = shareData.tgfxBaseView?.getCornerNameByPosition(cornerIdx) || '未知角';
-        console.log(`[缩放开始] 操作角：${actualCornerName} (索引${cornerIdx})`);
+        console.log(`[缩放开始] 操作视觉角索引${cornerIdx}，固定对角点坐标：(${centerX.toFixed(1)}, ${centerY.toFixed(1)})`);
     }
 
     endScaling(): void {
         console.log(`[缩放结束] 操作完成`);
         
-        const finalFlipState = { isFlippedX: this.isFlippedX, isFlippedY: this.isFlippedY };
-
         this.isScaling = false;
         this.cachedCenter = null;
         this.cornerIndex = -1;
         this.lastDistance = 0;
         this.oppositeCornerLocal = null;
-        this.currentFlipState = finalFlipState;
-        this.isFlippedX = false;
-        this.isFlippedY = false;
-    }
-
-    // 重置翻转状态（当选中新图层或开始新操作时调用）
-    resetFlipState(): void {
-        this.isFlippedX = false;
-        this.isFlippedY = false;
-        this.currentFlipState = { isFlippedX: false, isFlippedY: false };
-        console.log(`[翻转状态] 重置翻转状态`);
-    }
-
-    getFlipState(): { isFlippedX: boolean; isFlippedY: boolean } {
-        return { ...this.currentFlipState };
     }
 
     isInScaling(): boolean {
@@ -475,75 +456,74 @@ class ScaleStateManager {
 
     // 计算增量缩放因子（基于鼠标到对角点的距离变化），并检测翻转
     calculateIncrementalScaleFactor(currentX: number, currentY: number, oppositeCenterX: number, oppositeCenterY: number): { scaleX: number, scaleY: number } {
-        // 检测是否需要翻转
-        const shouldFlipX = this.checkFlipX(currentX, oppositeCenterX);
-        const shouldFlipY = this.checkFlipY(currentY, oppositeCenterY);
-        
         // 计算当前鼠标相对于对角点的向量
         const deltaX = currentX - oppositeCenterX;
         const deltaY = currentY - oppositeCenterY;
+        
+        // 判断是否应该翻转（基于鼠标相对对角点的位置）
+        const shouldFlipX = this.shouldFlipX(currentX, oppositeCenterX);
+        const shouldFlipY = this.shouldFlipY(currentY, oppositeCenterY);
+        
+        // 获取当前图层的翻转状态（从C++读取）
+        const flipStateVector = (shareData.tgfxBaseView as any).getSelectedLayerFlipState();
+        let currentFlippedX = false;
+        let currentFlippedY = false;
+        if (flipStateVector && flipStateVector.size && flipStateVector.size() >= 2) {
+            currentFlippedX = flipStateVector.get(0) > 0.5;
+            currentFlippedY = flipStateVector.get(1) > 0.5;
+        }
+        
+        // 打印翻转判断详情（每10帧打印一次，避免刷屏）
+        if (performance.now() % 100 < 16) {
+            const cornerNames = ['左上角', '右上角', '右下角', '左下角'];
+            const visualCornerName = cornerNames[this.cornerIndex] || '未知';
+            console.log(`[翻转判断] 视觉操作角：${visualCornerName}(索引${this.cornerIndex})，鼠标:(${currentX.toFixed(1)},${currentY.toFixed(1)})，对角点:(${oppositeCenterX.toFixed(1)},${oppositeCenterY.toFixed(1)})`);
+            console.log(`[翻转判断] 当前状态：FlipX=${currentFlippedX}, FlipY=${currentFlippedY}，应该状态：shouldFlipX=${shouldFlipX}, shouldFlipY=${shouldFlipY}`);
+        }
         
         // 根据翻转状态调整向量方向，计算有效距离
         const effectiveDeltaX = shouldFlipX ? -deltaX : deltaX;
         const effectiveDeltaY = shouldFlipY ? -deltaY : deltaY;
         const currentDistance = Math.hypot(effectiveDeltaX, effectiveDeltaY);
         
-        // console.log(`[缩放计算] 鼠标世界坐标：(${currentX.toFixed(2)}, ${currentY.toFixed(2)})`);
-        // console.log(`[缩放计算] 对角点世界坐标：(${oppositeCenterX.toFixed(2)}, ${oppositeCenterY.toFixed(2)})`);
-        // console.log(`[缩放计算] 当前角索引：${this.cornerIndex}，当前翻转状态：X=${this.isFlippedX}, Y=${this.isFlippedY}`);
-        // console.log(`[缩放计算] 应该翻转：X=${shouldFlipX}, Y=${shouldFlipY}`);
-        // console.log(`[缩放计算] 向量：(${deltaX.toFixed(2)}, ${deltaY.toFixed(2)})，有效向量：(${effectiveDeltaX.toFixed(2)}, ${effectiveDeltaY.toFixed(2)})`);
-        
         if (this.lastDistance === 0) {
-            // 第一次调用，初始化距离和翻转状态
+            // 第一次调用，初始化距离
             this.lastDistance = currentDistance;
-            this.isFlippedX = shouldFlipX;
-            this.isFlippedY = shouldFlipY;
-            this.currentFlipState = { isFlippedX: shouldFlipX, isFlippedY: shouldFlipY };
-            // console.log(`[缩放计算] 初始化：距离=${currentDistance.toFixed(2)}`);
             return { scaleX: 1.0, scaleY: 1.0 };
         }
-        
-        // 检查是否有翻转发生
-        const flipXChanged = shouldFlipX !== this.isFlippedX;
-        const flipYChanged = shouldFlipY !== this.isFlippedY;
         
         let scaleX = 1.0;
         let scaleY = 1.0;
         
-        // 如果有翻转发生，只应用翻转，不缩放
-        if (flipXChanged || flipYChanged) {
-            // 使用基于坐标位置的角名称判断
-            const actualCornerName = shareData.tgfxBaseView?.getCornerNameByPosition(this.cornerIndex) || '未知角';
+        // 检查是否需要翻转（当前应该翻转 != 实际已翻转）
+        const needFlipX = shouldFlipX !== currentFlippedX;
+        const needFlipY = shouldFlipY !== currentFlippedY;
+        
+        if (needFlipX || needFlipY) {
+            // 发生翻转
+            const cornerNames = ['左上角', '右上角', '右下角', '左下角'];
+            const visualCornerName = cornerNames[this.cornerIndex] || '未知';
             console.log(`\n[翻转发生] ==================`);
-            console.log(`[翻转发生] 操作角：${actualCornerName} (索引${this.cornerIndex})`);
+            console.log(`[翻转发生] 视觉操作角：${visualCornerName} (索引${this.cornerIndex})`);
             console.log(`[翻转发生] 鼠标位置：(${currentX.toFixed(2)}, ${currentY.toFixed(2)})`);
             console.log(`[翻转发生] 对角点位置：(${oppositeCenterX.toFixed(2)}, ${oppositeCenterY.toFixed(2)})`);
-            console.log(`[翻转发生] X变化=${flipXChanged}, Y变化=${flipYChanged}`);
-            const previousFlipX = this.isFlippedX;
-            const previousFlipY = this.isFlippedY;
-            if (flipXChanged) {
+            
+            if (needFlipX) {
                 scaleX = -1.0;
-                const isLeftCorner = (this.cornerIndex === 0 || this.cornerIndex === 3);
-                console.log(`[翻转发生] X轴翻转: ${previousFlipX} -> ${shouldFlipX} (初始位置=${isLeftCorner ? '左' : '右'})`);
-                this.isFlippedX = shouldFlipX;
+                console.log(`[翻转发生] X轴翻转: ${currentFlippedX} -> ${shouldFlipX}`);
             }
-            if (flipYChanged) {
+            if (needFlipY) {
                 scaleY = -1.0;
-                const isTopCorner = (this.cornerIndex === 0 || this.cornerIndex === 1);
-                console.log(`[翻转发生] Y轴翻转: ${previousFlipY} -> ${shouldFlipY} (初始位置=${isTopCorner ? '上' : '下'})`);
-                this.isFlippedY = shouldFlipY;
+                console.log(`[翻转发生] Y轴翻转: ${currentFlippedY} -> ${shouldFlipY}`);
             }
-            this.currentFlipState = { isFlippedX: this.isFlippedX, isFlippedY: this.isFlippedY };
-            console.log(`[翻转发生] 翻转后状态：X=${this.isFlippedX}, Y=${this.isFlippedY}`);
             console.log(`[翻转发生] ==================\n`);
+            
             this.lastDistance = Math.max(currentDistance, Number.EPSILON);
         } else {
             // 没有翻转，正常计算缩放因子
             const scaleFactor = currentDistance / this.lastDistance;
             scaleX = scaleFactor;
             scaleY = scaleFactor;
-            // console.log(`[缩放计算] 正常缩放：距离 ${this.lastDistance.toFixed(2)} -> ${currentDistance.toFixed(2)}，因子=${scaleFactor.toFixed(4)}`);
             // 更新上一帧的距离
             this.lastDistance = currentDistance;
         }
@@ -553,19 +533,32 @@ class ScaleStateManager {
         return { scaleX, scaleY };
     }
     
-    // 检测X轴是否应该翻转
-    // 关键修复：对于旋转后的图层，不进行翻转检测
-    private checkFlipX(currentX: number, centerX: number): boolean {
-        // 对于旋转后的图层，不进行翻转检测
-        // 原因：旋转改变了角的相对位置，但这不是翻转，翻转检测会产生错误的结果
-        return false;
+    // 检测X轴是否应该翻转（基于当前角的初始位置）
+    private shouldFlipX(currentX: number, centerX: number): boolean {
+        // 根据角索引判断是左侧还是右侧
+        const isLeftCorner = (this.cornerIndex === 0 || this.cornerIndex === 3);
+        
+        if (isLeftCorner) {
+            // 左侧角 -> 鼠标在中心点右侧时表示翻转
+            return currentX > centerX;
+        } else {
+            // 右侧角 -> 鼠标在中心点左侧时表示翻转
+            return currentX < centerX;
+        }
     }
     
-    // 检测Y轴是否应该翻转
-    private checkFlipY(currentY: number, centerY: number): boolean {
-        // 对于旋转后的图层，不进行翻转检测
-        // 原因：旋转改变了角的相对位置，但这不是翻转，翻转检测会产生错误的结果
-        return false;
+    // 检测Y轴是否应该翻转（基于当前角的初始位置）
+    private shouldFlipY(currentY: number, centerY: number): boolean {
+        // 根据角索引判断是上侧还是下侧
+        const isTopCorner = (this.cornerIndex === 0 || this.cornerIndex === 1);
+        
+        if (isTopCorner) {
+            // 上侧角 -> 鼠标在中心点下方时表示翻转
+            return currentY > centerY;
+        } else {
+            // 下侧角 -> 鼠标在中心点上方时表示翻转
+            return currentY < centerY;
+        }
     }
 }
 
@@ -608,20 +601,7 @@ class RotationStateManager {
         this.cachedCenter = null;
         this.cachedDistance = 0;
         
-        // 输出结束时的翻转状态信息
-        const flipState = scaleStateManager.getFlipState();
         console.log(`[旋转状态] 结束旋转，总旋转角度：${(this.totalRotation * 180 / Math.PI).toFixed(2)}°`);
-        console.log(`[旋转状态] 结束时翻转状态：X=${flipState.isFlippedX}, Y=${flipState.isFlippedY}`);
-        // 根据新的反转逻辑显示状态
-        let logicDescription = '';
-        if (flipState.isFlippedX && !flipState.isFlippedY) {
-            logicDescription = 'X轴翻转-反转角度';
-        } else if (flipState.isFlippedY && !flipState.isFlippedX) {
-            logicDescription = 'Y轴翻转-反转角度';
-        } else {
-            logicDescription = '双轴翻转或无翻转-保持角度';
-        }
-        console.log(`[旋转状态] 反转逻辑：${logicDescription}`);
     }
 
     isInRotation(): boolean {
@@ -686,7 +666,14 @@ class RotationStateManager {
         let deltaAngleDeg = originalDeltaAngleDeg;
         let accumulatedAngleDeg = (this.totalRotation + deltaAngle) * 180 / Math.PI;
 
-        const flipState = scaleStateManager.getFlipState();
+        // 从C++读取当前图层的翻转状态
+        const flipStateVector = (shareData.tgfxBaseView as any).getSelectedLayerFlipState();
+        let isFlippedX = false;
+        let isFlippedY = false;
+        if (flipStateVector && flipStateVector.size && flipStateVector.size() >= 2) {
+            isFlippedX = flipStateVector.get(0) > 0.5;
+            isFlippedY = flipStateVector.get(1) > 0.5;
+        }
         
         // 添加向量计算的调试输出
         console.log(`[旋转角度] 上次向量: (${lastVector.x.toFixed(1)}, ${lastVector.y.toFixed(1)}), 当前向量: (${currentVector.x.toFixed(1)}, ${currentVector.y.toFixed(1)})`);
@@ -695,13 +682,13 @@ class RotationStateManager {
         // 只有当有奇数个轴翻转时，才需要反转旋转方向
         // 根据翻转状态调整旋转方向
         // 经过测试发现：X=true,Y=false 时需要反转，Y=true,X=false 时也需要反转
-        if (flipState.isFlippedX && !flipState.isFlippedY) {
+        if (isFlippedX && !isFlippedY) {
             // 只有X轴翻转时，需要反转旋转方向
             deltaAngle = -deltaAngle;
             deltaAngleDeg = -deltaAngleDeg;
             accumulatedAngleDeg = (this.totalRotation + deltaAngle) * 180 / Math.PI;
             console.log(`[旋转角度] 检测到X轴翻转，反转旋转方向: ${originalDeltaAngleDeg.toFixed(4)}° -> ${deltaAngleDeg.toFixed(4)}°`);
-        } else if (flipState.isFlippedY && !flipState.isFlippedX) {
+        } else if (isFlippedY && !isFlippedX) {
             // 只有Y轴翻转时，需要反转旋转方向
             deltaAngle = -deltaAngle;
             deltaAngleDeg = -deltaAngleDeg;
@@ -711,7 +698,7 @@ class RotationStateManager {
             console.log(`[旋转角度] 双轴翻转或无翻转，保持旋转方向: ${deltaAngleDeg.toFixed(4)}°`);
         }
         
-        console.log(`[旋转角度] 翻转状态: X=${flipState.isFlippedX}, Y=${flipState.isFlippedY}`);
+        console.log(`[旋转角度] 翻转状态: X=${isFlippedX}, Y=${isFlippedY}`);
         console.log(`[旋转角度] 鼠标从(${lastX.toFixed(1)}, ${lastY.toFixed(1)})移动到(${currentX.toFixed(1)}, ${currentY.toFixed(1)})`);
         console.log(`[旋转角度] 中心点(${centerX.toFixed(1)}, ${centerY.toFixed(1)})`);
         console.log(`[旋转角度] 上次角度: ${lastAngleDeg.toFixed(2)}°, 当前角度: ${currentAngleDeg.toFixed(2)}°, 变化: ${deltaAngleDeg.toFixed(4)}°, 累计: ${accumulatedAngleDeg.toFixed(2)}°`);
@@ -1010,10 +997,7 @@ export class GestureManager {
 
             if (screenDeltaX !== 0 || screenDeltaY !== 0) {
                 try {
-                    // 将屏幕坐标增量转换为世界坐标增量
-                    const worldDeltaX = screenDeltaX / shareData.zoom;
-                    const worldDeltaY = screenDeltaY / shareData.zoom;
-                    shareData.tgfxBaseView?.moveHighlightLayer(worldDeltaX, worldDeltaY);
+                    shareData.tgfxBaseView?.moveHighlightLayer(screenDeltaX, screenDeltaY);
                 } catch (error) {
                     console.error('移动图层时出错:', error);
                 }
@@ -1058,16 +1042,23 @@ export class GestureManager {
                 
                 const cornerInfo = cursorDetectionCache.detectCornerPosition(clientXY.clientX, clientXY.clientY, shareData);
                 if (cornerInfo && cornerInfo.distance < 8) { // 确保在角控制器上
-                    console.log(`[缩放] 开始缩放操作，角位置：${cornerInfo.position}`);
+                    console.log(`[缩放] 开始缩放操作，检测到的角位置：${cornerInfo.position}`);
                     
-                    // 确定角索引：左上0, 右上1, 右下2, 左下3
+                    // 获取检测到位置的索引（这就是用户看到的位置）
                     const cornerIndexMap: { [key: string]: number } = {
                         '左上角': 0, '右上角': 1, '右下角': 2, '左下角': 3
                     };
-                    const cornerIdx = cornerIndexMap[cornerInfo.position] ?? -1;
+                    const detectedIdx = cornerIndexMap[cornerInfo.position] ?? -1;
                     
-                    // 获取对角点的本地坐标（图层坐标系，不会随缩放变化）
-                    const oppositeCornerIdx = (cornerIdx + 2) % 4;
+                    // 获取这个位置在原始坐标系中的实际角名称和索引
+                    // 用于翻转判断（左侧/右侧、上侧/下侧）
+                    const actualCornerName = (shareData.tgfxBaseView as any).getCornerNameByPosition(detectedIdx);
+                    const actualCornerIdx = cornerIndexMap[actualCornerName] ?? detectedIdx;
+                    
+                    console.log(`[缩放] 检测角索引${detectedIdx}(${cornerInfo.position}) -> 原始角索引${actualCornerIdx}(${actualCornerName})`);
+                    
+                    // 使用检测到的索引计算对角点（视觉上的对角）
+                    const oppositeCornerIdx = (detectedIdx + 2) % 4;
                     const localCornerVector = (shareData.tgfxBaseView as any).getSelectedLayerLocalCorner(oppositeCornerIdx);
                     
                     if (localCornerVector && typeof localCornerVector.size === 'function' && localCornerVector.size() >= 2) {
@@ -1080,13 +1071,14 @@ export class GestureManager {
                             const oppositeCenterX = worldCornerVector.get(0);
                             const oppositeCenterY = worldCornerVector.get(1);
                             
-                            console.log(`[缩放] 对角点本地坐标：(${localX.toFixed(2)}, ${localY.toFixed(2)})，世界坐标：(${oppositeCenterX.toFixed(1)}, ${oppositeCenterY.toFixed(1)})`);
+                            console.log(`[缩放] 操作角索引${detectedIdx}，固定对角点索引${oppositeCornerIdx}，本地坐标：(${localX.toFixed(2)}, ${localY.toFixed(2)})，世界坐标：(${oppositeCenterX.toFixed(1)}, ${oppositeCenterY.toFixed(1)})`);
                         
                             // 取消高亮
                             shareData.tgfxBaseView?.resetHighlightLayer();
                             
-                            // 传入本地坐标，在缩放过程中使用
-                            scaleStateManager.startScaling(worldCoords.worldX, worldCoords.worldY, oppositeCenterX, oppositeCenterY, cornerIdx, localX, localY);
+                            // 传入检测到的索引（用户看到的视觉位置），用于翻转判断
+                            // 因为翻转判断应该基于用户的视觉感受：点击视觉左上角，鼠标往右下移动不应该翻转
+                            scaleStateManager.startScaling(worldCoords.worldX, worldCoords.worldY, oppositeCenterX, oppositeCenterY, detectedIdx, localX, localY);
                             
                             isMouseDown = true;
                             hasMoved = false;
@@ -1096,18 +1088,6 @@ export class GestureManager {
                         }
                     }
                 }
-            } else {
-                // 如果光标是缩放类型但未满足其他条件，则执行默认的选择和移动逻辑
-                shareData.tgfxBaseView?.resetHighlightLayer();
-                if (shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY)) {
-                    lastPointX = clientXY.clientX;
-                    lastPointY = clientXY.clientY;
-                    isMouseDown = true;
-                    hasMoved = false;
-                }
-                shareData.tgfxBaseView?.markDirty();
-                animationLoop(shareData);
-                return; // 提前返回，避免执行后续逻辑
             }
             
             // 检测旋转操作 - 只有当光标是旋转类型时才进入旋转模式
@@ -1122,13 +1102,6 @@ export class GestureManager {
                     const layerType = layerInfo.get(1);
                     layerId = layerInfo.get(2); // 获取图层指针地址作为ID
                     console.log(`[旋转] 选中图层：${layerName} (${layerType}), ID: ${layerId}`);
-                }
-
-                if (!layerId) {
-                    console.warn('[旋转] 无法获取图层有效ID，取消旋转并重置图层');
-                    shareData.tgfxBaseView?.resetHighlightLayer();
-                    shareData.tgfxBaseView?.resetSelectedLayer();
-                    return;
                 }
                 
                 // 获取并缓存中心点
@@ -1150,14 +1123,7 @@ export class GestureManager {
                     lastPointY = clientXY.clientY;
                     return;
                 } else {
-                    // 如果获取中心点失败，则回退到默认的选择和移动逻辑
-                    shareData.tgfxBaseView?.resetHighlightLayer();
-                    if (shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY)) {
-                        lastPointX = clientXY.clientX;
-                        lastPointY = clientXY.clientY;
-                        isMouseDown = true;
-                        hasMoved = false;
-                    }
+                    console.error('[旋转] 无法获取图层中心点，取消旋转操作');
                     return;
                 }
             }
@@ -1200,7 +1166,6 @@ export class GestureManager {
                 }
                 
                 scaleStateManager.endScaling();
-                shareData.tgfxBaseView?.resetSelectedLayer(); // 缩放结束后重置，避免影响下一次缩放
                 // 重置状态
                 isMouseDown = false;
                 hasMoved = false;
@@ -1227,8 +1192,6 @@ export class GestureManager {
                 const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
 
                 console.log(`[JS调试] 单击坐标：(${worldCoords.worldX}, ${worldCoords.worldY})`);
-                // 在选择新图层前，重置翻转状态
-                scaleStateManager.resetFlipState();
                 const selected = shareData.tgfxBaseView?.selectLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
                 console.log(`[JS调试] 选中结果：${selected}`);
             } else {

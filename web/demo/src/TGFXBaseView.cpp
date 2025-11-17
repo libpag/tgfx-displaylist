@@ -1918,6 +1918,29 @@ std::vector<float> TGFXBaseView::getOppositeCornerWorldCoords(int cornerIndex) {
   return result;
 }
 
+std::vector<float> TGFXBaseView::getSelectedLayerFlipState() {
+  std::vector<float> result;
+  
+  if (!selectedTargetLayer) {
+    return result; // 返回空数组
+  }
+  
+  // 获取全局变换矩阵
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  // 检测翻转状态（通过缩放值的正负判断）
+  float scaleX = globalMatrix.getScaleX();
+  float scaleY = globalMatrix.getScaleY();
+  bool isFlippedX = scaleX < 0;
+  bool isFlippedY = scaleY < 0;
+  
+  // 返回翻转状态：[isFlippedX, isFlippedY]，用0/1表示
+  result.push_back(isFlippedX ? 1.0f : 0.0f);
+  result.push_back(isFlippedY ? 1.0f : 0.0f);
+  
+  return result;
+}
+
 void TGFXBaseView::debugCornerAndOppositeInfo() {
   if (!selectedTargetLayer) {
     printf("[调试] 没有选中的图层\n");
