@@ -369,8 +369,11 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
 
     for (auto it : layers) {
       const std::string& layerName = it->name();
-      // 跳过选中边框和多选边框，继续检查后续图层
-      if (layerName == "__SELECTION_BORDER__" || layerName == "__MULTI_SELECTION_BORDER__") {
+      // 跳过所有控制图层：角控制器、单选边框、多选边框、临时高亮
+      if (layerName == "__CORNER_HANDLE__" || 
+          layerName == "__SELECTION_BORDER__" || 
+          layerName == "__MULTI_SELECTION_BORDER__" ||
+          layerName == "__TEMP_HIGHLIGHT__") {
         continue;
       }
       
@@ -379,7 +382,7 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
         continue;
       }
       
-      // 选择第一个（最顶层的）非选中边框且非当前高亮的图层
+      // 选择第一个（最顶层的）非控制图层且非当前高亮的图层
       selectedLayer = it;
       break;
     }
@@ -603,9 +606,12 @@ bool TGFXBaseView::selectMoveLayer(float pointX, float pointY) {
 
   // 统一使用层级顺序选择策略，与选中和高亮检测保持一致
   for (auto it : layers) {
-    // 跳过控制图层
+    // 跳过所有控制图层：角控制器、单选边框、多选边框、临时高亮
     const std::string& layerName = it->name();
-    if (layerName == "__CORNER_HANDLE__" || layerName == "__SELECTION_BORDER__") {
+    if (layerName == "__CORNER_HANDLE__" || 
+        layerName == "__SELECTION_BORDER__" || 
+        layerName == "__MULTI_SELECTION_BORDER__" ||
+        layerName == "__TEMP_HIGHLIGHT__") {
       continue;
     }
     
@@ -1020,6 +1026,17 @@ std::vector<float> TGFXBaseView::getSelectedLayerCenter() {
   printf("[旋转C++] getSelectedLayerCenter 被调用\n");
   std::vector<float> center = {0.0f, 0.0f};
   
+  // 优先检查多选模式
+  if (isMultiSelection && !selectedLayers.empty()) {
+    printf("[旋转C++] 多选模式，计算AABB中心点\n");
+    auto aabb = calculateAxisAlignedBoundingBox();
+    center[0] = aabb.centerX();
+    center[1] = aabb.centerY();
+    printf("[旋转C++] 多选AABB中心点：(%.2f, %.2f)\n", center[0], center[1]);
+    return center;
+  }
+  
+  // 单选模式
   if (!selectedTargetLayer) {
     printf("[旋转C++] 错误：没有选中的图层\n");
     return center;
@@ -1196,7 +1213,10 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
     const std::string& layerName = layers[0]->name();
     // printf("[DEBUG] selectLayerAndCheckRedraw: 第一个图层名称: '%s'\n", layerName.c_str());
     
-    if (layerName == "__CORNER_HANDLE__" || layerName == "__SELECTION_BORDER__") {
+    if (layerName == "__CORNER_HANDLE__" || 
+        layerName == "__SELECTION_BORDER__" || 
+        layerName == "__MULTI_SELECTION_BORDER__" ||
+        layerName == "__TEMP_HIGHLIGHT__") {
       // printf("[DEBUG] selectLayerAndCheckRedraw: 检测到控制图层: %s\n", layerName.c_str());
       
       // 对于角控制器，直接返回，不进行穿透（角控制器本身就是操作区域）
@@ -1225,8 +1245,11 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
     
     printf("[选中调试]   检查图层%zu: '%s' (地址:%p)\n", i, layerName.c_str(), (void*)layer.get());
     
-    // 跳过控制图层
-    if (layerName == "__CORNER_HANDLE__" || layerName == "__SELECTION_BORDER__") {
+    // 跳过所有控制图层：角控制器、单选边框、多选边框、临时高亮
+    if (layerName == "__CORNER_HANDLE__" || 
+        layerName == "__SELECTION_BORDER__" || 
+        layerName == "__MULTI_SELECTION_BORDER__" ||
+        layerName == "__TEMP_HIGHLIGHT__") {
       printf("[选中调试]     → 跳过：控制图层\n");
       continue;
     }
@@ -1561,7 +1584,34 @@ void TGFXBaseView::updateSelectedLineWidth() {
 std::vector<float> TGFXBaseView::getSelectedLayerCorners() {
   std::vector<float> result;
   
-  // 如果没有选中图层，返回空数组
+  // 多选模式：返回AABB的4个角
+  if (isMultiSelection && !selectedLayers.empty()) {
+    auto aabb = calculateAxisAlignedBoundingBox();
+    
+    // 4个角的世界坐标（AABB是水平矩形）
+    std::vector<tgfx::Point> corners = {
+      tgfx::Point::Make(aabb.left, aabb.top),     // 0: 左上角
+      tgfx::Point::Make(aabb.right, aabb.top),    // 1: 右上角  
+      tgfx::Point::Make(aabb.right, aabb.bottom), // 2: 右下角
+      tgfx::Point::Make(aabb.left, aabb.bottom),  // 3: 左下角
+    };
+    
+    // 转换到屏幕坐标系
+    result.reserve(8); // 4个角 * 2个坐标(x,y)
+    for (const auto& corner : corners) {
+      // 应用视口变换（zoom 和 offset）
+      float screenX = corner.x * lastZoom + lastOffsetX;
+      float screenY = corner.y * lastZoom + lastOffsetY;
+      
+      result.push_back(screenX);
+      result.push_back(screenY);
+    }
+    
+    printf("[多选-角坐标] 返回AABB的4个角的屏幕坐标\n");
+    return result;
+  }
+  
+  // 单选模式：返回选中图层的4个角
   if (!selectedTargetLayer) {
     return result;
   }
