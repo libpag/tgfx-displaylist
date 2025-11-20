@@ -295,6 +295,9 @@ class TGFXBaseView {
   // AABB计算
   tgfx::Rect calculateAxisAlignedBoundingBox();
   
+  // 多选图层平均缩放计算（参考单选逻辑）
+  float calculateMultiSelectionAverageScale() const;
+  
   // 多选边框管理
   void updateMultiSelectionBorder();
   void createMultiSelectionBorder();
