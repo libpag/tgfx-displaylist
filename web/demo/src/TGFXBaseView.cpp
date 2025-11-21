@@ -450,7 +450,7 @@ bool TGFXBaseView::highlightLayerAndCheckRedraw(float x, float y) {
     if (latestHighlightedLayer) {
       resetHighlightLayer();
     }
-    printf("[高亮C++] 多选模式 - 跳过高亮检测\n");
+    // printf("[高亮C++] 多选模式 - 跳过高亮检测\n");
     return false;
   }
 
@@ -691,115 +691,252 @@ bool TGFXBaseView::resetMoveLayers() {
 }
 
 bool TGFXBaseView::selectMoveLayer(float pointX, float pointY) {
+  printf("\n========== [selectMoveLayer] 被调用 ==========\n");
+  printf("[selectMoveLayer] 当前多选状态: %s\n", isMultiSelection ? "true" : "false");
+  printf("[selectMoveLayer] 当前选中图层数: %zu\n", selectedLayers.size());
+  printf("[selectMoveLayer] 点击坐标: (%.2f, %.2f)\n", pointX, pointY);
+  
   if (!appHost) {
+    printf("[selectMoveLayer] ❌ appHost 为空\n");
+    printf("========== [selectMoveLayer] 结束 ==========\n\n");
     return false;
   }
 
   moveLayers.clear();
 
+  // 【关键修复1】如果当前处于多选模式，优先检查是否在多选框AABB内
+  if (isMultiSelection && !selectedLayers.empty()) {
+    printf("\n[多选模式优先判断] 当前为多选模式\n");
+    
+    auto aabb = calculateAxisAlignedBoundingBox();
+    printf("[多选模式优先判断] AABB范围：left=%.2f, top=%.2f, right=%.2f, bottom=%.2f\n",
+           aabb.left, aabb.top, aabb.right, aabb.bottom);
+    
+    bool isInAABB = aabb.contains(pointX, pointY);
+    printf("[多选模式优先判断] 点击是否在AABB内: %s\n", isInAABB ? "是" : "否");
+    
+    if (isInAABB) {
+      // 【重要】点击在多选框内，这是拖拽行为，不改变选中状态
+      printf("[多选模式优先判断] ✅ 点击在AABB内，这是拖拽行为\n");
+      printf("[多选模式优先判断] 保持多选状态不变，允许拖拽移动\n");
+      printf("========== [selectMoveLayer] 结束 ==========\n\n");
+      // moveLayers保持为空，moveMultiSelection会处理移动逻辑
+      return true;
+    } else {
+      // 点击在多选框外，这可能是单击切换选择的行为
+      printf("[多选模式优先判断] ⚠️ 点击在AABB外，这可能是切换选择行为\n");
+      printf("[多选模式优先判断] 继续执行图层检测...\n");
+      // 继续往下执行，检测是否点击到其他图层
+    }
+  }
+
   // 复用高亮的选层策略：从命中列表挑真实内容层，排除叠加效果层
   auto layers = appHost->getLayersUnderPoint(pointX, pointY);
+  printf("[selectMoveLayer] getLayersUnderPoint 返回 %zu 个图层\n", layers.size());
+  
   if (layers.empty()) {
+    printf("[selectMoveLayer] ❌ 没有检测到图层\n");
+    
+    // 【关键修复2】如果当前是多选模式且点击在AABB外的空白处，不做任何处理
+    if (isMultiSelection) {
+      printf("[selectMoveLayer] 多选模式下点击空白处，保持多选状态不变\n");
+      printf("========== [selectMoveLayer] 结束 ==========\n\n");
+      return false;
+    }
+    
+    printf("========== [selectMoveLayer] 结束 ==========\n\n");
     return false;
   }
 
   std::shared_ptr<tgfx::Layer> picked = nullptr;
 
   // 统一使用层级顺序选择策略，与选中和高亮检测保持一致
+  printf("[selectMoveLayer] 开始过滤图层，共 %zu 个\n", layers.size());
+  int layerIdx = 0;
   for (auto it : layers) {
-    // 跳过所有控制图层：角控制器、单选边框、多选边框、临时高亮
     const std::string& layerName = it->name();
+    
+    // 【详细诊断】输出图层的完整信息
+    printf("[selectMoveLayer]   图层%d: '%s' (地址:%p)\n", layerIdx++, layerName.c_str(), (void*)it.get());
+    printf("[selectMoveLayer]       图层类型: %d\n", static_cast<int>(it->type()));
+    printf("[selectMoveLayer]       父图层: %p\n", (void*)(it->parent()));
+    printf("[selectMoveLayer]       是否为 latestSelectedLayer: %s\n", (it == latestSelectedLayer) ? "是" : "否");
+    
+    // 【关键检查】如果名称为空，检查是否是实例匹配
+    if (layerName.empty()) {
+      printf("[selectMoveLayer]       ⚠️ 空名称图层！\n");
+      printf("[selectMoveLayer]       是否为 latestSelectedLayer 实例: %s\n", 
+             (it == latestSelectedLayer) ? "是" : "否");
+      
+      // 检查是否在角控制器列表中
+      bool isCornerHandle = std::find(cornerHandles.begin(), cornerHandles.end(), it) != cornerHandles.end();
+      printf("[selectMoveLayer]       是否为角控制器实例: %s\n", isCornerHandle ? "是" : "否");
+    }
+    
+    // 跳过所有控制图层：角控制器、单选边框、多选边框、临时高亮
     if (layerName == "__CORNER_HANDLE__" || 
         layerName == "__SELECTION_BORDER__" || 
         layerName == "__MULTI_SELECTION_BORDER__" ||
         layerName == "__TEMP_HIGHLIGHT__") {
+      printf("[selectMoveLayer]     → 跳过：控制图层 '%s'\n", layerName.c_str());
       continue;
     }
     
     // 跳过当前选中边框和角控制器（使用实例比较）
-    if (it == latestSelectedLayer ||
-        std::find(cornerHandles.begin(), cornerHandles.end(), it) != cornerHandles.end()) {
+    if (it == latestSelectedLayer) {
+      printf("[selectMoveLayer]     → 跳过：当前选中边框 (地址匹配)\n");
+      continue;
+    }
+    
+    if (std::find(cornerHandles.begin(), cornerHandles.end(), it) != cornerHandles.end()) {
+      printf("[selectMoveLayer]     → 跳过：角控制器 (地址匹配)\n");
       continue;
     }
     
     // 选择第一个（最顶层的）非控制图层
+    printf("[selectMoveLayer]     ✅ 选中此图层作为 picked\n");
     picked = it;
     break;
   }
+  
+  printf("[selectMoveLayer] 过滤完成，picked: %s (地址:%p)\n", 
+         picked ? picked->name().c_str() : "null",
+         picked ? (void*)picked.get() : nullptr);
 
-  if (!picked) {
+  // 【关键修复3】如果当前处于多选模式，检查点击的图层
+  if (isMultiSelection && !selectedLayers.empty()) {
+    printf("\n[多选模式图层检测] 进入多选模式图层检测分支\n");
+    printf("[多选模式图层检测] picked 图层: %s\n", picked ? picked->name().c_str() : "null");
+    
+    if (!picked) {
+      // 没有点击到有效图层，但前面已经判断过AABB，这里应该不会执行
+      printf("[多选模式图层检测] ❌ 没有点击到有效图层\n");
+      printf("========== [selectMoveLayer] 结束 ==========\n\n");
+      return false;
+    }
+    
+    printf("[多选模式图层检测] 点击到图层：'%s' (%p)\n", picked->name().c_str(), (void*)picked.get());
+    
+    // 点击到了具体图层，检查是否在多选列表中
+    bool isInSelectedLayers = false;
+    for (const auto& selectedLayer : selectedLayers) {
+      if (selectedLayer == picked) {
+        isInSelectedLayers = true;
+        break;
+      }
+    }
+    
+    printf("[多选模式图层检测] 图层是否在多选列表中: %s\n", isInSelectedLayers ? "是" : "否");
+    
+    if (isInSelectedLayers) {
+      // 【重要】点击的是多选列表中的图层，这是拖拽行为，不改变选中状态
+      printf("[多选模式图层检测] ✅ 点击多选列表中的图层，这是拖拽行为\n");
+      printf("[多选模式图层检测] 保持多选状态不变，允许拖拽移动\n");
+      printf("========== [selectMoveLayer] 结束 ==========\n\n");
+      // 不清除多选状态，moveLayers保持为空，moveMultiSelection会处理
+      return true;
+    } else {
+      // 【重要】点击的是多选列表外的图层，这是单击切换选择行为
+      printf("[多选模式图层检测] ⚠️ 点击多选列表外的图层，切换到单选\n");
+      printf("[多选模式图层检测] 多选状态改变：true → false\n");
+      
+      // 清除多选状态
+      resetSelectedLayer();
+      
+      // 创建单选效果
+      auto selectionBorder = tgfx::ShapeLayer::Make();
+      selectionBorder->setBlendMode(tgfx::BlendMode::SrcOver);
+      auto rectPath = tgfx::Path();
+      rectPath.addRect(picked->getBounds(nullptr, true));
+      if (picked->mask() != nullptr) {
+        tgfx::Path maskPath;
+        maskPath.addRect(picked->mask()->getBounds());
+        selectionBorder->setPath(maskPath);
+      } else {
+        selectionBorder->setPath(rectPath);
+      }
+      selectionBorder->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41, 204)));
+
+      auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(picked);
+      float scaleX = std::sqrt(globalMatrix.getScaleX() * globalMatrix.getScaleX() + 
+                               globalMatrix.getSkewY() * globalMatrix.getSkewY());
+      float scaleY = std::sqrt(globalMatrix.getSkewX() * globalMatrix.getSkewX() + 
+                               globalMatrix.getScaleY() * globalMatrix.getScaleY());
+      float layerAvgScale = (scaleX + scaleY) / 2.0f;
+      float totalScale = layerAvgScale * lastZoom;
+      float adjustedLineWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
+      
+      selectionBorder->setLineWidth(adjustedLineWidth);
+      selectionBorder->setStrokeAlign(tgfx::StrokeAlign::Inside);
+      selectionBorder->setMatrix(globalMatrix);
+      selectionBorder->setName("__SELECTION_BORDER__");
+
+      auto rootLayer = appHost->displayList.root();
+      if (rootLayer) {
+        rootLayer->addChild(selectionBorder);
+      }
+
+      latestSelectedLayer = selectionBorder;
+      selectedTargetLayer = picked;
+
+      // 创建四个角控制器
+      createCornerHandles(picked);
+      
+      appHost->markDirty();
+      printf("========== [selectMoveLayer] 结束 ==========\n\n");
+      
+      // 【重要】返回false，因为这不是拖拽行为，是切换选择
+      return false;
+    }
+  }
+
+  // 单选模式：没有点击到图层则返回失败
+  if (!picked && !isMultiSelection) {
+    printf("[selectMoveLayer] 单选模式下没有点击到图层，返回 false\n");
+    printf("========== [selectMoveLayer] 结束 ==========\n\n");
     return false;
   }
 
-  // 【关键修复】如果当前处于多选模式，点击单个图层时需要退出多选模式并创建单选效果
-  if (isMultiSelection) {
-    printf("[单选] 从多选模式切换到单选模式，选中图层：%p\n", (void*)picked.get());
-    
-    // 清除多选状态
-    resetSelectedLayer();
-    
-    // 创建单选效果
-    auto selectionBorder = tgfx::ShapeLayer::Make();
-    selectionBorder->setBlendMode(tgfx::BlendMode::SrcOver);
-    auto rectPath = tgfx::Path();
-    rectPath.addRect(picked->getBounds(nullptr, true));
-    if (picked->mask() != nullptr) {
-      tgfx::Path maskPath;
-      maskPath.addRect(picked->mask()->getBounds());
-      selectionBorder->setPath(maskPath);
-    } else {
-      selectionBorder->setPath(rectPath);
-    }
-    selectionBorder->setStrokeStyle(tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41, 204)));
-
-    auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(picked);
-    float scaleX = std::sqrt(globalMatrix.getScaleX() * globalMatrix.getScaleX() + 
-                             globalMatrix.getSkewY() * globalMatrix.getSkewY());
-    float scaleY = std::sqrt(globalMatrix.getSkewX() * globalMatrix.getSkewX() + 
-                             globalMatrix.getScaleY() * globalMatrix.getScaleY());
-    float layerAvgScale = (scaleX + scaleY) / 2.0f;
-    float totalScale = layerAvgScale * lastZoom;
-    float adjustedLineWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
-    
-    selectionBorder->setLineWidth(adjustedLineWidth);
-    selectionBorder->setStrokeAlign(tgfx::StrokeAlign::Inside);
-    selectionBorder->setMatrix(globalMatrix);
-    selectionBorder->setName("__SELECTION_BORDER__");
-
-    auto rootLayer = appHost->displayList.root();
-    if (rootLayer) {
-      rootLayer->addChild(selectionBorder);
-    }
-
-    latestSelectedLayer = selectionBorder;
-    selectedTargetLayer = picked;
-
-    // 创建四个角控制器
-    createCornerHandles(picked);
-    
-    appHost->markDirty();
-  }
-
   // 将遮罩相关的层一起加入（保持原逻辑）
-  for (auto it : layers) {
-    if (it->mask() == picked) {
-      moveLayers.push_back(it);
+  if (picked) {
+    for (auto it : layers) {
+      if (it->mask() == picked) {
+        moveLayers.push_back(it);
+      }
     }
+    moveLayers.push_back(picked);
+    printf("[selectMoveLayer] 添加 picked 图层到 moveLayers，当前 moveLayers 数量: %zu\n", moveLayers.size());
   }
-  moveLayers.push_back(picked);
+  
+  printf("[selectMoveLayer] 返回 true，准备移动\n");
+  printf("========== [selectMoveLayer] 结束 ==========\n\n");
   return true;
 }
 
 void TGFXBaseView::moveHighlightLayer(float deltaX, float deltaY) {
+  printf("\n========== [moveHighlightLayer] 被调用 ==========\n");
+  printf("[moveHighlightLayer] 增量: (%.2f, %.2f)\n", deltaX, deltaY);
+  printf("[moveHighlightLayer] 当前多选状态: %s\n", isMultiSelection ? "true" : "false");
+  printf("[moveHighlightLayer] 当前 selectedLayers 数量: %zu\n", selectedLayers.size());
+  printf("[moveHighlightLayer] 当前 moveLayers 数量: %zu\n", moveLayers.size());
+  printf("[moveHighlightLayer] 当前 isMoving 状态: %s\n", isMoving ? "true" : "false");
+  
   // 优先处理多选移动
   if (isMultiSelection && !selectedLayers.empty()) {
+    printf("[moveHighlightLayer] ✅ 进入多选移动分支\n");
+    printf("========== [moveHighlightLayer] 结束，调用 moveMultiSelection ==========\n\n");
+    
     moveMultiSelection(deltaX, deltaY);
     return;
   }
   
   if (moveLayers.empty()) {
+    printf("[moveHighlightLayer] ❌ moveLayers 为空，跳过移动\n");
+    printf("========== [moveHighlightLayer] 结束 ==========\n\n");
     return;
   }
+  
+  printf("[moveHighlightLayer] 进入单选移动分支\n");
 
   // 标记进入移动状态，避免在移动过程中重建并显示角控制器
   isMoving = true;
@@ -825,6 +962,7 @@ void TGFXBaseView::moveHighlightLayer(float deltaX, float deltaY) {
   }
 
   appHost->markDirty();
+  printf("========== [moveHighlightLayer] 单选移动完成 ==========\n\n");
 }
 
 std::vector<float> TGFXBaseView::getMoveLayerPosition() {
@@ -1278,17 +1416,18 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
 
   auto layers = appHost->getLayersUnderPoint(x, y);
   
-  printf("[选中调试] 原始检测到 %zu 个图层，坐标(%.2f, %.2f)\n", layers.size(), x, y);
+  // printf("[选中调试] 原始检测到 %zu 个图层，坐标(%.2f, %.2f)\n", layers.size(), x, y);
   auto rootLayer = appHost->displayList.root();
-  printf("[选中调试] 当前根图层地址: %p\n", (void*)rootLayer);
+  // printf("[选中调试] 当前根图层地址: %p\n", (void*)rootLayer);
   
   // ========== 新增：如果当前是多选模式，清空多选状态 ==========
   if (isMultiSelection) {
-    printf("[选中调试] 退出多选模式，进入单选模式\n");
+    // printf("[选中调试] 退出多选模式，进入单选模式\n");
     clearMultiSelection();
   }
   
   // 先输出原始图层信息
+  /*
   for (size_t i = 0; i < layers.size(); i++) {
     auto layer = layers[i];
     const char* layerType = "Unknown";
@@ -1307,10 +1446,11 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
            hasParent ? (layer->parent()->name().empty() ? "root" : layer->parent()->name().c_str()) : "null",
            (void*)layer.get());
   }
+  */
   
   // 过滤掉根图层和父图层为null的异常图层
   std::vector<std::shared_ptr<tgfx::Layer>> validLayers;
-  int filteredCount = 0;
+  // int filteredCount = 0;
   
   for (auto layer : layers) {
     bool isRootLayer = (layer.get() == rootLayer);
@@ -1318,21 +1458,21 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
     
     // 只保留有有效父图层的非根图层
     if (isRootLayer) {
-      filteredCount++;
-      printf("[选中调试] ⚠️ 过滤掉根图层: 地址=%p\n", (void*)layer.get());
+      // filteredCount++;
+      // printf("[选中调试] ⚠️ 过滤掉根图层: 地址=%p\n", (void*)layer.get());
     } else if (!hasValidParent) {
-      filteredCount++;
-      printf("[选中调试] ⚠️ 过滤掉异常图层（父图层为null）: '%s', 地址=%p\n", 
-             layer->name().c_str(), (void*)layer.get());
+      // filteredCount++;
+      // printf("[选中调试] ⚠️ 过滤掉异常图层（父图层为null）: '%s', 地址=%p\n", 
+      //        layer->name().c_str(), (void*)layer.get());
     } else {
       validLayers.push_back(layer);
-      printf("[选中调试] ✅ 保留有效图层: '%s', 地址=%p\n", 
-             layer->name().c_str(), (void*)layer.get());
+      // printf("[选中调试] ✅ 保留有效图层: '%s', 地址=%p\n", 
+      //        layer->name().c_str(), (void*)layer.get());
     }
   }
   
-  printf("[选中调试] 过滤结果：原始%zu个 → 过滤掉%d个 → 剩余%zu个有效图层\n", 
-         layers.size(), filteredCount, validLayers.size());
+  // printf("[选中调试] 过滤结果：原始%zu个 → 过滤掉%d个 → 剩余%zu个有效图层\n", 
+  //        layers.size(), filteredCount, validLayers.size());
   
   layers = validLayers;
   
@@ -1346,15 +1486,17 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
       uniqueLayers.push_back(layer);
       seenPointers.insert(layer.get());
     } else {
-      printf("[选中调试] ⚠️ 去重：移除重复图层 '%s' (地址:%p)\n", 
-             layer->name().c_str(), (void*)layer.get());
+      // printf("[选中调试] ⚠️ 去重：移除重复图层 '%s' (地址:%p)\n", 
+      //        layer->name().c_str(), (void*)layer.get());
     }
   }
   
+  /*
   if (uniqueLayers.size() != layers.size()) {
     printf("[选中调试] 去重结果：%zu个 → %zu个唯一图层\n", 
            layers.size(), uniqueLayers.size());
   }
+  */
   
   layers = uniqueLayers;
 
@@ -1387,36 +1529,38 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
 
   // 按层级顺序选择图层，支持穿透选择（与高亮逻辑保持一致）
   std::shared_ptr<tgfx::Layer> bestLayer = nullptr;
-  printf("[选中调试] 开始遍历 %zu 个有效图层\n", layers.size());
+  // printf("[选中调试] 开始遍历 %zu 个有效图层\n", layers.size());
   
   for (size_t i = 0; i < layers.size(); i++) {
     auto layer = layers[i];
     const std::string& layerName = layer->name();
     
-    printf("[选中调试]   检查图层%zu: '%s' (地址:%p)\n", i, layerName.c_str(), (void*)layer.get());
+    // printf("[选中调试]   检查图层%zu: '%s' (地址:%p)\n", i, layerName.c_str(), (void*)layer.get());
     
     // 跳过所有控制图层：角控制器、单选边框、多选边框、临时高亮
     if (layerName == "__CORNER_HANDLE__" || 
         layerName == "__SELECTION_BORDER__" || 
         layerName == "__MULTI_SELECTION_BORDER__" ||
         layerName == "__TEMP_HIGHLIGHT__") {
-      printf("[选中调试]     → 跳过：控制图层\n");
+      // printf("[选中调试]     → 跳过：控制图层\n");
       continue;
     }
     
     // 选择第一个（最顶层的）非控制图层
     // 注意：不跳过已选中的图层，这样可以避免选中框在旋转后频繁切换
     bestLayer = layer;
-    printf("[选中调试]     ✅ 找到可选中的图层\n");
+    // printf("[选中调试]     ✅ 找到可选中的图层\n");
     break;
   }
   
+  /*
   if (!bestLayer) {
     printf("[选中调试] ❌ 未找到可选中的图层\n");
   }
+  */
   
   if (bestLayer) {
-    printf("[选中调试] ✅ 选中新图层: '%s' (地址:%p)\n", bestLayer->name().c_str(), (void*)bestLayer.get());
+    // printf("[选中调试] ✅ 选中新图层: '%s' (地址:%p)\n", bestLayer->name().c_str(), (void*)bestLayer.get());
 
     // 先清理旧的选择框
     resetSelectedLayer();
@@ -1472,7 +1616,7 @@ bool TGFXBaseView::selectLayerAndCheckRedraw(float x, float y) {
 }
 
 bool TGFXBaseView::resetSelectedLayer() {
-  printf("[状态管理] 开始重置选中状态\n");
+  // printf("[状态管理] 开始重置选中状态\n");
   
   bool hasChanges = false;
   
@@ -1484,7 +1628,7 @@ bool TGFXBaseView::resetSelectedLayer() {
   
   // 2. 移除选中边框
   if (latestSelectedLayer) {
-    printf("[状态管理] 移除选中边框: 地址=%p\n", (void*)latestSelectedLayer.get());
+    // printf("[状态管理] 移除选中边框: 地址=%p\n", (void*)latestSelectedLayer.get());
     if (latestSelectedLayer->parent()) {
       latestSelectedLayer->removeFromParent();
     }
@@ -1501,12 +1645,12 @@ bool TGFXBaseView::resetSelectedLayer() {
       
       // 先收集需要移除的图层，避免遍历时修改集合导致迭代器失效
       std::vector<std::shared_ptr<tgfx::Layer>> toRemove;
-      int removedCount = 0;
+      // int removedCount = 0;
       for (auto child : children) {
         if (child && (child->name() == "__SELECTION_BORDER__" || child->name() == "__MULTI_SELECTION_BORDER__")) {
-          printf("[状态管理]   ⚠️ 发现遗留的选中边框: %s, 地址=%p，标记移除\n", child->name().c_str(), (void*)child.get());
+          // printf("[状态管理]   ⚠️ 发现遗留的选中边框: %s, 地址=%p，标记移除\n", child->name().c_str(), (void*)child.get());
           toRemove.push_back(child);
-          removedCount++;
+          // removedCount++;
         }
       }
       
@@ -1515,15 +1659,17 @@ bool TGFXBaseView::resetSelectedLayer() {
         child->removeFromParent();
       }
       
+      /*
       if (removedCount > 0) {
         printf("[状态管理]   清理了 %d 个遗留的选中边框\n", removedCount);
       }
+      */
     }
   }
   
   // 3. 清理临时高亮层（多选模式的内部高亮）
   if (!tempHighlightLayers.empty()) {
-    printf("[状态管理] 清理 %zu 个临时高亮层\n", tempHighlightLayers.size());
+    // printf("[状态管理] 清理 %zu 个临时高亮层\n", tempHighlightLayers.size());
     for (auto& highlight : tempHighlightLayers) {
       if (highlight && highlight->parent()) {
         highlight->removeFromParent();
@@ -1535,14 +1681,14 @@ bool TGFXBaseView::resetSelectedLayer() {
   
   // 4. 清空多选图层列表
   if (!selectedLayers.empty()) {
-    printf("[状态管理] 清空多选图层列表（%zu 个图层）\n", selectedLayers.size());
+    // printf("[状态管理] 清空多选图层列表（%zu 个图层）\n", selectedLayers.size());
     selectedLayers.clear();
     hasChanges = true;
   }
   
   // 5. 重置多选模式标志
   if (isMultiSelection) {
-    printf("[状态管理] 退出多选模式\n");
+    // printf("[状态管理] 退出多选模式\n");
     isMultiSelection = false;
     hasChanges = true;
   }
@@ -1564,7 +1710,7 @@ bool TGFXBaseView::resetSelectedLayer() {
     appHost->markDirty();
   }
   
-  printf("[状态管理] 选中状态重置完成，有变化：%s\n", hasChanges ? "是" : "否");
+  // printf("[状态管理] 选中状态重置完成，有变化：%s\n", hasChanges ? "是" : "否");
   return hasChanges;
 }
 
@@ -3369,13 +3515,23 @@ std::shared_ptr<tgfx::ShapeLayer> TGFXBaseView::createTempHighlight(std::shared_
 
 // 多选移动（参考单选的移动逻辑）
 void TGFXBaseView::moveMultiSelection(float deltaX, float deltaY) {
-  if (selectedLayers.empty()) return;
+  printf("\n>>> [moveMultiSelection] 开始执行\n");
+  printf("    参数：deltaX=%.2f, deltaY=%.2f\n", deltaX, deltaY);
+  printf("    selectedLayers 数量：%zu\n", selectedLayers.size());
+  
+  if (selectedLayers.empty()) {
+    printf("    ❌ selectedLayers 为空，直接返回\n");
+    printf("<<< [moveMultiSelection] 结束\n\n");
+    return;
+  }
   
   // 标记进入移动状态
+  printf("    设置 isMoving = true\n");
   isMoving = true;
   
   // 移动时隐藏选中框和角控制器（但不删除）
   if (latestSelectedLayer) {
+    printf("    隐藏多选边框\n");
     latestSelectedLayer->setVisible(false);
   }
   for (auto& handle : cornerHandles) {
@@ -3391,11 +3547,16 @@ void TGFXBaseView::moveMultiSelection(float deltaX, float deltaY) {
   }
   
   // 遍历每个图层，应用相同的世界坐标增量
+  printf("    开始移动 %zu 个图层\n", selectedLayers.size());
+  int layerIndex = 0;
   for (auto& layer : selectedLayers) {
     // 将世界坐标增量转换为图层本地坐标
     auto localDelta = CoordinateTransformer::screenDeltaToLayerDelta(
       deltaX, deltaY, lastZoom, layer
     );
+    
+    printf("      图层%d '%s': 本地增量(%.2f, %.2f)\n", 
+           layerIndex++, layer->name().c_str(), localDelta.x, localDelta.y);
     
     auto matrix = layer->matrix();
     matrix.preTranslate(localDelta.x, localDelta.y);
@@ -3403,9 +3564,13 @@ void TGFXBaseView::moveMultiSelection(float deltaX, float deltaY) {
   }
   
   // 更新AABB和视觉效果（但保持隐藏状态）
+  printf("    更新多选边框\n");
   updateMultiSelectionBorder();
   
+  printf("    标记重绘\n");
   appHost->markDirty();
+  
+  printf("<<< [moveMultiSelection] 执行完成\n\n");
 }
 
 // 多选旋转
