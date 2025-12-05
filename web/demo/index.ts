@@ -56,13 +56,10 @@ if (typeof window !== 'undefined') {
     };
 
     window.onresize = () => {
-        const isSupported = JSON.parse(localStorage.getItem('isSupported'));
+        const isSupportedStr = localStorage.getItem('isSupported');
+        const isSupported = isSupportedStr ? JSON.parse(isSupportedStr) : false;
         if(isSupported){
             onResizeEvent(shareData);
         }
-    };
-
-    window.onclick = () => {
-        // onClickEvent(shareData);
     };
 }

@@ -3709,6 +3709,7 @@ bool TGFXBaseView::isInMultiSelectionMode() const {
   return isMultiSelection;
 }
 
+
 // ========== 新架构：本地空间交互支持 ==========
 /**
  * 获取选中图层的世界变换矩阵

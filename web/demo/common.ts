@@ -194,11 +194,6 @@ function updateTexts() {
             }
         });
     }
-
-    const zoomValue = document.getElementById('zoomValue');
-    if (zoomValue) {
-        // 更新 zoom avalue 时不需要替换 ‘%’
-    }
 }
 
 function initLanguageSwitcher() {
