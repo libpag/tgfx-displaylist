@@ -140,9 +140,29 @@ class TGFXBaseView {
   // 调试方法：打印所有角和对角点的详细信息
   void debugCornerAndOppositeInfo();
   
+  // 根据视觉角名称获取对应的本地坐标索引
+  // 参数：visualCornerName - 视觉角名称 ("左上角", "右上角", "右下角", "左下角")
+  // 返回：对应的本地坐标索引 (0-3)，如果无效则返回-1
+  int getLocalIndexByVisualCornerName(const std::string& visualCornerName);
+  
   // 获取选中图层的翻转状态
   // 返回：[isFlippedX (0或1), isFlippedY (0或1)]，如果没有选中图层则返回空数组
   std::vector<float> getSelectedLayerFlipState();
+  
+  // ========== 新架构：本地空间交互支持 ==========
+  
+  /**
+   * 获取选中图层的世界变换矩阵
+   * 返回: 6 个浮点数 [a, b, c, d, e, f]
+   * 矩阵格式：x' = a*x + c*y + e, y' = b*x + d*y + f
+   */
+  std::vector<float> getSelectedLayerWorldMatrix();
+  
+  /**
+   * 获取选中图层的本地边界
+   * 返回: [left, top, right, bottom]
+   */
+  std::vector<float> getSelectedLayerLocalBounds();
   
   // 旋转区域检测
   bool isPointInRotateZone(float x, float y);

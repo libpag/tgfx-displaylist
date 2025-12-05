@@ -16,7 +16,39 @@
 //
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-import {TGFXBaseView, ShareData, shareData, draw, animationLoop} from './common';
+import { ShareData, animationLoop } from './common';
+import { localSpaceInteraction } from './LocalSpaceInteraction';
+/////
+
+// ========== 交互常量配置 ==========
+const InteractionConfig = {
+    // 缩放限制
+    MIN_ZOOM: 0.01,
+    MAX_ZOOM: 1000.0,
+    
+    // 命中检测阈值（本地像素空间）
+    CORNER_HIT_TOLERANCE_PIXELS: 30,  // 角控制器命中容差（本地像素）
+    ROTATION_ZONE_TOLERANCE_PIXELS: 80, // 旋转区域最大距离（本地像素）
+    
+    // 框选相关
+    BOX_SELECTION_MIN_DRAG: 20,      // 框选最小拖动距离（像素）
+    BOX_SELECTION_MIN_PRESS: 300,    // 框选最小按压时间（毫秒）
+    
+    // 缩放变化阈值
+    SCALE_CHANGE_THRESHOLD: 0.0001,  // 缩放变化检测阈值
+    
+    // 手势检测
+    PINCH_TIMEOUT: 150,              // 捏合超时（毫秒）
+    TIME_THRESHOLD: 50,              // 时间阈值（毫秒）
+    DELTA_Y_THRESHOLD: 50,           // deltaY阈值
+    DELTA_Y_CHANGE_THRESHOLD: 10,    // deltaY变化阈值
+    MOUSE_WHEEL_RATIO: 800,          // 鼠标滚轮比率
+    TOUCH_WHEEL_RATIO: 100,          // 触摸板滚轮比率
+    
+    // 旋转相关
+    MIN_ROTATION_RADIUS_FACTOR: 0.25, // 最小旋转半径因子
+    MIN_ABSOLUTE_RADIUS: 1e-3,        // 最小绝对半径
+};
 
 // 光标工厂类 - 负责创建和缓存光标
 class CursorFactory {
@@ -127,52 +159,16 @@ class CursorFactory {
 
 // 坐标转换器类 - 统一处理坐标转换逻辑
 class CoordinateTransformer {
-    private static readonly MIN_ZOOM = 0.01;  // 最小缩放比例，避免除零
-    
     static screenToWorld(screenX: number, screenY: number, shareData: ShareData): {worldX: number, worldY: number} {
-        // 暂时禁用 C++ 端的坐标转换，强制使用 JavaScript 实现进行调试
-        // if (shareData.tgfxBaseView && typeof (shareData.tgfxBaseView as any).screenToWorld === 'function') {
-        //     try {
-        //         const result = (shareData.tgfxBaseView as any).screenToWorld(screenX, screenY);
-        //         if (result && typeof result.x === 'number' && typeof result.y === 'number') {
-        //             return { worldX: result.x, worldY: result.y };
-        //         }
-        //     } catch (error) {
-        //         // C++ 转换失败，降级到 JavaScript 实现
-        //     }
-        // }
-
-        // JavaScript 实现 - 添加精度保护
-        const safeZoom = Math.max(shareData.zoom, CoordinateTransformer.MIN_ZOOM);
+        const safeZoom = Math.max(shareData.zoom, InteractionConfig.MIN_ZOOM);
         const worldX = (screenX - shareData.offsetX) / safeZoom;
         const worldY = (screenY - shareData.offsetY) / safeZoom;
-        
-        // 调试日志
-        // console.log(`[坐标转换] 屏幕(${screenX.toFixed(1)}, ${screenY.toFixed(1)}) -> 世界(${worldX.toFixed(1)}, ${worldY.toFixed(1)}) | zoom=${safeZoom.toFixed(3)}, offset=(${shareData.offsetX.toFixed(1)}, ${shareData.offsetY.toFixed(1)})`);
-        
         return { worldX, worldY };
     }
 
     static worldToScreen(worldX: number, worldY: number, shareData: ShareData): {screenX: number, screenY: number} {
-        // 暂时禁用 C++ 端的坐标转换，强制使用 JavaScript 实现进行调试
-        // if (shareData.tgfxBaseView && typeof (shareData.tgfxBaseView as any).worldToScreen === 'function') {
-        //     try {
-        //         const result = (shareData.tgfxBaseView as any).worldToScreen(worldX, worldY);
-        //         if (result && typeof result.x === 'number' && typeof result.y === 'number') {
-        //             return { screenX: result.x, screenY: result.y };
-        //         }
-        //     } catch (error) {
-        //         // C++ 转换失败，降级到 JavaScript 实现
-        //     }
-        // }
-
-        // JavaScript 实现：世界坐标 -> 屏幕坐标
         const screenX = worldX * shareData.zoom + shareData.offsetX;
         const screenY = worldY * shareData.zoom + shareData.offsetY;
-        
-        // 调试日志
-        // console.log(`[坐标转换] 世界(${worldX.toFixed(1)}, ${worldY.toFixed(1)}) -> 屏幕(${screenX.toFixed(1)}, ${screenY.toFixed(1)}) | zoom=${shareData.zoom.toFixed(3)}, offset=(${shareData.offsetX.toFixed(1)}, ${shareData.offsetY.toFixed(1)})`);
-        
         return { screenX, screenY };
     }
 }
@@ -205,37 +201,26 @@ class CursorDetectionCache {
             const isMultiSelection = (shareData.tgfxBaseView as any).isInMultiSelectionMode && 
                                      (shareData.tgfxBaseView as any).isInMultiSelectionMode();
 
-            console.log(`[光标检测] performDetection 调用 - 鼠标位置: (${mouseX}, ${mouseY}), 多选模式: ${isMultiSelection}`);
+            // ========== 预先检测是否在选中图层内部（用于后续判断）==========
+            let isInsideSelectionArea = false;
+            if (isMultiSelection) {
+                isInsideSelectionArea = this.isPointInMultiSelectionBounds(worldCoords.worldX, worldCoords.worldY, shareData);
+            } else {
+                isInsideSelectionArea = this.isPointInSelectedLayer(worldCoords.worldX, worldCoords.worldY, shareData);
+            }
 
-            // 1. 首先检查角控制器（最高优先级）- 单选和多选都支持
+            // ========== 1. 首先检查角控制器（最高优先级）==========
+            // 角控制器必须最先检测，因为它们可能位于图层边界上
             const cornerDetectionResult = this.detectCornerPosition(mouseX, mouseY, shareData);
 
-            if (cornerDetectionResult && typeof cornerDetectionResult === 'object') {
-                const { position, distance } = cornerDetectionResult;
+            console.log(`[光标检测] 角检测结果:`, cornerDetectionResult, `在图层内:`, isInsideSelectionArea);
 
-                // 只要在角控制器检测范围内（距离 < 8 像素），就显示缩放光标
-                if (distance < 8) {
-                    console.log(`[光标检测] ${isMultiSelection ? '多选' : '单选'}模式 - 检测到角控制器：${position}，距离：${distance.toFixed(2)}`);
-                    
-                    // 获取检测到的位置对应的索引
-                    const cornerIndexMap: { [key: string]: number } = {
-                        '左上角': 0, '右上角': 1, '右下角': 2, '左下角': 3
-                    };
-                    const detectedIndex = cornerIndexMap[position] ?? 0;
-                    
-                    // 单选模式才获取翻转状态（多选模式使用AABB，不需要翻转信息）
-                    if (!isMultiSelection) {
-                        const actualCornerName = (shareData.tgfxBaseView as any).getCornerNameByPosition(detectedIndex);
-                        const flipStateVector = (shareData.tgfxBaseView as any).getSelectedLayerFlipState();
-                        let isFlippedX = false;
-                        let isFlippedY = false;
-                        if (flipStateVector && flipStateVector.size && flipStateVector.size() >= 2) {
-                            isFlippedX = flipStateVector.get(0) > 0.5;
-                            isFlippedY = flipStateVector.get(1) > 0.5;
-                        }
-                        console.log(`[光标检测-单选] 实际位置：${actualCornerName} (索引${detectedIndex})，翻转状态：X=${isFlippedX}, Y=${isFlippedY}`);
-                    }
-                    
+            if (cornerDetectionResult && typeof cornerDetectionResult === 'object') {
+                const { position, localPixelDistance } = cornerDetectionResult;
+
+                // 使用屏幕像素距离判断是否在角控制器上（缩放区域）
+                // 缩放区域优先级最高，即使在图层内部也显示缩放光标
+                if (localPixelDistance !== undefined && localPixelDistance < InteractionConfig.CORNER_HIT_TOLERANCE_PIXELS) {
                     // 返回缩放光标（基于用户看到的位置）
                     const cursorType = (() => {
                         switch (position) {
@@ -246,51 +231,57 @@ class CursorDetectionCache {
                             default: return 'nw-resize';
                         }
                     })();
-                    console.log(`[光标检测] → 返回缩放光标：${cursorType}`);
+                    console.log(`[光标检测] → 返回缩放光标: ${cursorType}, 像素距离: ${localPixelDistance.toFixed(1)}`);
                     return cursorType;
                 }
-            }
-
-            // 2. 检查角控制器附近的旋转区域（距离 8-40 像素）- 单选和多选都支持
-            if (cornerDetectionResult && typeof cornerDetectionResult === 'object') {
-                const { distance } = cornerDetectionResult;
-                if (distance >= 8 && distance < 40) {
-                    // console.log(`[光标检测] ${isMultiSelection ? '多选' : '单选'}模式 - 检测到旋转区域，距离：${distance.toFixed(2)}`);
-                    // console.log(`[光标检测] → 返回旋转光标`);
-                    return 'rotate';
+                
+                // 检查是否在旋转区域（角控制器外围，30-80px）
+                // 重要：如果在图层内部，不显示旋转光标，而是显示指针光标
+                if (localPixelDistance !== undefined && 
+                    localPixelDistance >= InteractionConfig.CORNER_HIT_TOLERANCE_PIXELS && 
+                    localPixelDistance < InteractionConfig.ROTATION_ZONE_TOLERANCE_PIXELS) {
+                    
+                    // 如果在图层内部，不返回旋转光标
+                    if (isInsideSelectionArea) {
+                        console.log(`[光标检测] 在旋转区域但也在图层内部，跳过旋转光标`);
+                        // 继续往下走，会返回 pointer
+                    } else {
+                        console.log(`[光标检测] → 返回旋转光标 (角附近), 像素距离: ${localPixelDistance.toFixed(1)}`);
+                        return 'rotate';
+                    }
                 }
             }
 
-            // 3. 检查是否在选择边框上（显示移动光标）
-            // 注意：只有当不在角控制器和旋转区域时才检查边框
+            // ========== 2. 检查是否在选择边框上（显示移动光标）==========
             const isOnSelectionBorder = (shareData.tgfxBaseView as any).isPointInSelectionBorder &&
                 (shareData.tgfxBaseView as any).isPointInSelectionBorder(worldCoords.worldX, worldCoords.worldY);
 
+            console.log(`[光标检测] 选择边框: ${isOnSelectionBorder}`);
+
             if (isOnSelectionBorder) {
-                // console.log(`[光标检测] ${isMultiSelection ? '多选' : '单选'}模式 - 检测到选择边框`);
-                // console.log(`[光标检测] → 返回移动光标`);
+                console.log(`[光标检测] → 返回移动光标`);
                 return 'move';
             }
 
-            // 检查是否在选中图层内部（如果有选中的图层）
-            const isInSelectedLayer = this.isPointInSelectedLayer(worldCoords.worldX, worldCoords.worldY, shareData);
-
-            // 检查旋转区域（但排除图层内部）
-            const isInRotateZone = !isInSelectedLayer && 
-                (shareData.tgfxBaseView as any).isPointInRotateZone &&
-                (shareData.tgfxBaseView as any).isPointInRotateZone(worldCoords.worldX, worldCoords.worldY);
-
-            if (isInRotateZone) {
-                // console.log(`[光标检测] 检测到旋转区域（边界外）`);
-                // console.log(`[光标检测] → 返回旋转光标`);
-                return 'rotate';
-            }
-
-            // 如果在选中图层内部，显示指针光标
-            if (isInSelectedLayer) {
+            // ========== 3. 检查是否在选中图层内部 ==========
+            if (isInsideSelectionArea) {
+                // 在选中图层内部，显示指针光标
+                console.log(`[光标检测] → 返回指针光标 (在图层内部)`);
                 return 'pointer';
             }
 
+            // ========== 4. 检查旋转区域（C++层的旋转区域检测，排除图层内部）==========
+            const isInRotateZone = (shareData.tgfxBaseView as any).isPointInRotateZone &&
+                (shareData.tgfxBaseView as any).isPointInRotateZone(worldCoords.worldX, worldCoords.worldY);
+
+            console.log(`[光标检测] C++旋转区域: ${isInRotateZone}`);
+
+            if (isInRotateZone) {
+                console.log(`[光标检测] → 返回旋转光标 (C++区域)`);
+                return 'rotate';
+            }
+
+            console.log(`[光标检测] → 返回默认光标`);
             return 'default';
         } catch (error) {
             console.error('[光标检测] 检测失败:', error);
@@ -300,96 +291,354 @@ class CursorDetectionCache {
 
     /**
      * 检查点是否在选中图层内部
+     * 
+     * 使用选中图层的4个角坐标进行精确的多边形内点检测
+     * 支持旋转的图层（非轴对齐）
      */
     private isPointInSelectedLayer(worldX: number, worldY: number, shareData: ShareData): boolean {
         if (!shareData.tgfxBaseView) return false;
 
         try {
-            // 调用 C++ 方法检查点是否在选中图层内部
-            const isInLayer = (shareData.tgfxBaseView as any).isPointInSelectedLayer &&
-                (shareData.tgfxBaseView as any).isPointInSelectedLayer(worldX, worldY);
-            
-            return !!isInLayer;
+            // 获取选中图层的4个角坐标
+            const cornersVector = (shareData.tgfxBaseView as any).getSelectedLayerCorners();
+            if (!cornersVector || typeof cornersVector.size !== 'function' || cornersVector.size() < 8) {
+                return false;
+            }
+
+            // 提取4个角的世界坐标
+            const corners: { x: number; y: number }[] = [];
+            for (let i = 0; i < 4; i++) {
+                corners.push({
+                    x: cornersVector.get(i * 2),
+                    y: cornersVector.get(i * 2 + 1)
+                });
+            }
+
+            // 使用射线法（Ray Casting）检测点是否在多边形内部
+            // 这个方法支持任意凸多边形，包括旋转后的矩形
+            return this.isPointInPolygon(worldX, worldY, corners);
         } catch (error) {
             console.error('检查选中图层失败:', error);
             return false;
         }
     }
 
-    // 检测具体是哪个角控制器
-    public detectCornerPosition(mouseX: number, mouseY: number, shareData: ShareData): { position: string; distance: number } | null {
-        if (!shareData.tgfxBaseView) return null;
+    /**
+     * 射线法检测点是否在多边形内部
+     * 
+     * 原理：从点向右发射一条射线，计算与多边形边的交点数
+     * 如果交点数为奇数，则点在多边形内部
+     */
+    private isPointInPolygon(x: number, y: number, polygon: { x: number; y: number }[]): boolean {
+        let inside = false;
+        const n = polygon.length;
+        
+        for (let i = 0, j = n - 1; i < n; j = i++) {
+            const xi = polygon[i].x, yi = polygon[i].y;
+            const xj = polygon[j].x, yj = polygon[j].y;
+            
+            // 检查射线是否与边相交
+            if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+                inside = !inside;
+            }
+        }
+        
+        return inside;
+    }
+
+    /**
+     * 检查点是否在多选包围盒（AABB）内部
+     * 
+     * 多选模式下，需要检查点是否在整个选择框内部，而不仅仅是单个图层内部
+     * 这样可以正确处理多选框内部的空白区域
+     */
+    private isPointInMultiSelectionBounds(worldX: number, worldY: number, shareData: ShareData): boolean {
+        if (!shareData.tgfxBaseView) return false;
 
         try {
-            // 使用优化的坐标转换器
-            const worldCoords = CoordinateTransformer.screenToWorld(mouseX, mouseY, shareData);
-
-            // 首先确认鼠标确实在角控制器区域附近
-            const isInCornerHandle = (shareData.tgfxBaseView as any).isPointInCornerHandle(worldCoords.worldX, worldCoords.worldY);
-            console.log(`[角控制器检测] 鼠标世界坐标: (${worldCoords.worldX.toFixed(2)}, ${worldCoords.worldY.toFixed(2)}), isPointInCornerHandle: ${isInCornerHandle}`);
-            
-            if (!isInCornerHandle) {
-                return null;
-            }
-
-            // 检查函数是否存在
-            if (typeof (shareData.tgfxBaseView as any).getSelectedLayerCorners !== 'function') {
-                return null;
-            }
-
-            // 使用新的C++函数获取选中图层的4个顶点坐标
+            // 获取多选包围盒的4个角
             const cornersVector = (shareData.tgfxBaseView as any).getSelectedLayerCorners();
+            if (!cornersVector || typeof cornersVector.size !== 'function' || cornersVector.size() < 8) {
+                return false;
+            }
 
-            // 将 Emscripten vector 转换为 JavaScript 数组
-            let corners: number[] = [];
-            if (cornersVector && typeof cornersVector.size === 'function') {
-                const size = cornersVector.size();
-                for (let i = 0; i < size; i++) {
-                    corners.push(cornersVector.get(i));
+            // 提取4个角的世界坐标
+            const corners: { x: number; y: number }[] = [];
+            for (let i = 0; i < 4; i++) {
+                corners.push({
+                    x: cornersVector.get(i * 2),
+                    y: cornersVector.get(i * 2 + 1)
+                });
+            }
+
+            // 计算AABB（轴对齐包围盒）
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            for (const corner of corners) {
+                minX = Math.min(minX, corner.x);
+                maxX = Math.max(maxX, corner.x);
+                minY = Math.min(minY, corner.y);
+                maxY = Math.max(maxY, corner.y);
+            }
+
+            // 检查点是否在AABB内部
+            return worldX >= minX && worldX <= maxX && worldY >= minY && worldY <= maxY;
+        } catch (error) {
+            console.error('检查多选包围盒失败:', error);
+            return false;
+        }
+    }
+
+    // 【核心函数】检测具体是哪个角控制器
+    // 直接使用屏幕像素距离进行命中测试，避免本地坐标缩放问题
+    public detectCornerPosition(mouseX: number, mouseY: number, shareData: ShareData): { position: string; distance: number; localCornerIndex: number; localPixelDistance?: number } | null {
+        if (!shareData.tgfxBaseView) {
+            console.log('[角检测] tgfxBaseView 为空');
+            return null;
+        }
+
+        try {
+            // 检查是否处于多选模式
+            const isMultiSelection = (shareData.tgfxBaseView as any).isInMultiSelectionMode && 
+                                     (shareData.tgfxBaseView as any).isInMultiSelectionMode();
+
+            console.log('[角检测] 多选模式:', isMultiSelection);
+
+            // ========== 获取选中图层的4个角位置 ==========
+            const cornersVector = (shareData.tgfxBaseView as any).getSelectedLayerCorners();
+            if (!cornersVector || typeof cornersVector.size !== 'function' || cornersVector.size() < 8) {
+                console.log('[角检测] 无法获取选中图层角坐标');
+                return null;
+            }
+            
+            // 提取4个角的世界坐标
+            const corners: { x: number; y: number; idx: number }[] = [];
+            for (let i = 0; i < 4; i++) {
+                corners.push({
+                    x: cornersVector.get(i * 2),
+                    y: cornersVector.get(i * 2 + 1),
+                    idx: i
+                });
+            }
+            
+            // 获取鼠标的世界坐标
+            const worldCoords = CoordinateTransformer.screenToWorld(mouseX, mouseY, shareData);
+            
+            console.log(`[角检测] 选中图层4角(世界坐标): 0:(${corners[0].x.toFixed(1)},${corners[0].y.toFixed(1)}) 1:(${corners[1].x.toFixed(1)},${corners[1].y.toFixed(1)}) 2:(${corners[2].x.toFixed(1)},${corners[2].y.toFixed(1)}) 3:(${corners[3].x.toFixed(1)},${corners[3].y.toFixed(1)})`);
+            console.log(`[角检测] 鼠标世界坐标: (${worldCoords.worldX.toFixed(1)}, ${worldCoords.worldY.toFixed(1)}), 屏幕坐标: (${mouseX.toFixed(1)}, ${mouseY.toFixed(1)})`);
+            
+            // ========== 直接使用屏幕像素距离找最近的角 ==========
+            let minScreenDistance = Infinity;
+            let nearestCornerIdx = -1;
+            
+            const distances = corners.map((c, i) => {
+                const dx = worldCoords.worldX - c.x;
+                const dy = worldCoords.worldY - c.y;
+                const worldDist = Math.sqrt(dx * dx + dy * dy);
+                const screenDist = worldDist * shareData.zoom;
+                
+                if (screenDist < minScreenDistance) {
+                    minScreenDistance = screenDist;
+                    nearestCornerIdx = i;
+                }
+                
+                return `角${i}:${screenDist.toFixed(1)}px`;
+            });
+            console.log(`[角检测] 鼠标到各角屏幕距离: ${distances.join(', ')}`);
+
+            // 检查是否在最大检测范围内（使用旋转区域容差）
+            if (minScreenDistance > InteractionConfig.ROTATION_ZONE_TOLERANCE_PIXELS) {
+                console.log(`[角检测] 最近角距离 ${minScreenDistance.toFixed(1)}px 超出最大范围 ${InteractionConfig.ROTATION_ZONE_TOLERANCE_PIXELS}px`);
+                return null;
+            }
+
+            if (isMultiSelection) {
+                // ========== 多选模式：使用世界坐标直接检测 ==========
+                return this.detectCornerPositionMultiSelection(mouseX, mouseY, shareData);
+            }
+
+            // ========== 单选模式：使用屏幕像素距离判断 ==========
+            const localCornerIndex = nearestCornerIdx;
+            
+            // 获取该本地角的世界坐标，然后与选择框的4个角进行比较，找出视觉位置
+            const visualPosition = this.localCornerToVisualPosition(localCornerIndex, shareData);
+
+            // 计算归一化距离（用于兼容旧API）
+            const diagonalLength = Math.hypot(
+                corners[2].x - corners[0].x,
+                corners[2].y - corners[0].y
+            );
+            const normalizedDistance = diagonalLength > 0 ? (minScreenDistance / shareData.zoom) / diagonalLength : 0;
+
+            console.log(`[角检测] 命中角${localCornerIndex}(${visualPosition}), 屏幕距离:${minScreenDistance.toFixed(1)}px`);
+
+            return { 
+                position: visualPosition,  // 返回视觉位置名称
+                distance: normalizedDistance,  // 归一化距离（保留兼容性）
+                localCornerIndex: localCornerIndex,  // 同时返回本地索引，供缩放使用
+                localPixelDistance: minScreenDistance  // 屏幕像素距离（用于判断缩放/旋转）
+            };
+
+        } catch (error) {
+            console.error('[角检测] 异常:', error);
+            // 出错时清除缓存
+            localSpaceInteraction.clearCache();
+            return null;
+        }
+    }
+
+    /**
+     * 多选模式的角检测
+     * 
+     * 多选模式下没有单一图层的逆矩阵，所以使用世界坐标直接检测
+     * 直接比较鼠标世界坐标与选择框4个角的距离
+     */
+    private detectCornerPositionMultiSelection(mouseX: number, mouseY: number, shareData: ShareData): { position: string; distance: number; localCornerIndex: number; localPixelDistance?: number } | null {
+        try {
+            // 获取鼠标的世界坐标
+            const worldCoords = CoordinateTransformer.screenToWorld(mouseX, mouseY, shareData);
+            
+            // 获取选择框的4个角的世界坐标
+            const cornersVector = (shareData.tgfxBaseView as any).getSelectedLayerCorners();
+            if (!cornersVector || typeof cornersVector.size !== 'function' || cornersVector.size() < 8) {
+                return null;
+            }
+
+            // 提取4个角的世界坐标
+            const corners: { x: number; y: number; idx: number }[] = [];
+            for (let i = 0; i < 4; i++) {
+                corners.push({
+                    x: cornersVector.get(i * 2),
+                    y: cornersVector.get(i * 2 + 1),
+                    idx: i
+                });
+            }
+
+            // 计算选择框的对角线长度，用于归一化距离
+            const diagonalLength = Math.hypot(
+                corners[2].x - corners[0].x,
+                corners[2].y - corners[0].y
+            );
+            
+            if (diagonalLength < 1e-6) {
+                return null;
+            }
+
+            // 找到最近的角
+            let minDistance = Infinity;
+            let nearestCornerIdx = -1;
+            
+            for (const corner of corners) {
+                const dx = worldCoords.worldX - corner.x;
+                const dy = worldCoords.worldY - corner.y;
+                const distance = Math.hypot(dx, dy);
+                
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    nearestCornerIdx = corner.idx;
                 }
             }
 
-            if (!corners || corners.length !== 8) {
+            if (nearestCornerIdx < 0) {
                 return null;
             }
 
-            // 解析坐标数组: [左上角x, 左上角y, 右上角x, 右上角y, 右下角x, 右下角y, 左下角x, 左下角y]
-            const cornerData = [
-                { name: '左上角', x: corners[0], y: corners[1] }, // 0
-                { name: '右上角', x: corners[2], y: corners[3] }, // 1
-                { name: '右下角', x: corners[4], y: corners[5] }, // 2
-                { name: '左下角', x: corners[6], y: corners[7] }, // 3
-            ];
+            // 将距离归一化（相对于对角线长度）
+            const normalizedDistance = minDistance / diagonalLength;
+            
+            // 计算世界像素距离（考虑缩放）
+            // 多选模式下使用世界距离乘以缩放比例作为"本地像素距离"
+            const worldPixelDistance = minDistance * shareData.zoom;
 
-            // 验证坐标数据的有效性
-            const hasValidCoords = cornerData.every(corner =>
-                typeof corner.x === 'number' && typeof corner.y === 'number' &&
-                !isNaN(corner.x) && !isNaN(corner.y)
-            );
-
-            if (!hasValidCoords) {
-                return null;
+            // 使用排序方法判断视觉位置
+            const targetCorner = corners[nearestCornerIdx];
+            const sortedByX = [...corners].sort((a, b) => a.x - b.x);
+            const leftCorners = [sortedByX[0], sortedByX[1]];
+            const rightCorners = [sortedByX[2], sortedByX[3]];
+            
+            const isLeft = leftCorners.some(c => c.idx === nearestCornerIdx);
+            
+            let visualPosition: string;
+            if (isLeft) {
+                const leftSorted = leftCorners.sort((a, b) => a.y - b.y);
+                const isTop = leftSorted[0].idx === nearestCornerIdx;
+                visualPosition = isTop ? '左上角' : '左下角';
+            } else {
+                const rightSorted = rightCorners.sort((a, b) => a.y - b.y);
+                const isTop = rightSorted[0].idx === nearestCornerIdx;
+                visualPosition = isTop ? '右上角' : '右下角';
             }
 
-            // 计算鼠标到每个角的距离（统一使用屏幕坐标）
-            const distances = cornerData.map(corner => {
-                // 将角的世界坐标转换为屏幕坐标
-                const cornerScreen = CoordinateTransformer.worldToScreen(corner.x, corner.y, shareData);
-                const dx = mouseX - cornerScreen.screenX;
-                const dy = mouseY - cornerScreen.screenY;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                return { corner: corner.name, distance };
-            });
-
-            // 选择距离最近的角
-            const nearest = distances.reduce((min, current) =>
-                current.distance < min.distance ? current : min
-            );
-
-            return { position: nearest.corner, distance: nearest.distance };
+            return {
+                position: visualPosition,
+                distance: normalizedDistance,
+                localCornerIndex: nearestCornerIdx,  // 多选模式下这个就是世界坐标中的角索引
+                localPixelDistance: worldPixelDistance  // 世界像素距离（考虑缩放）
+            };
 
         } catch (error) {
-            return null; // 出错时返回 null
+            console.error('[光标检测-多选] 检测失败:', error);
+            return null;
+        }
+    }
+
+    /**
+     * 将本地角索引转换为视觉位置名称
+     * 
+     * 原理：获取该本地角的世界坐标，然后根据其在所有角中的排序位置判断视觉位置
+     * 使用排序而不是中心点比较，避免边界情况
+     */
+    private localCornerToVisualPosition(localCornerIndex: number, shareData: ShareData): string {
+        try {
+            // 获取所有4个角的世界坐标
+            const cornersVector = (shareData.tgfxBaseView as any).getSelectedLayerCorners();
+            if (!cornersVector || typeof cornersVector.size !== 'function' || cornersVector.size() < 8) {
+                // 无法获取角坐标，回退到本地名称
+                const localNames = ['左上角', '右上角', '右下角', '左下角'];
+                return localNames[localCornerIndex] || '未知';
+            }
+
+            // 提取4个角的世界坐标
+            const corners: { x: number; y: number; localIdx: number }[] = [];
+            for (let i = 0; i < 4; i++) {
+                corners.push({
+                    x: cornersVector.get(i * 2),
+                    y: cornersVector.get(i * 2 + 1),
+                    localIdx: i
+                });
+            }
+
+            // 获取当前本地角的世界坐标
+            const targetCorner = corners[localCornerIndex];
+            if (!targetCorner) {
+                return '未知';
+            }
+
+            // 使用排序方法判断视觉位置
+            // 按 X 坐标排序，找出左侧和右侧的角
+            const sortedByX = [...corners].sort((a, b) => a.x - b.x);
+            const leftCorners = [sortedByX[0], sortedByX[1]];  // X 最小的两个
+            const rightCorners = [sortedByX[2], sortedByX[3]]; // X 最大的两个
+            
+            // 判断目标角是在左侧还是右侧
+            const isLeft = leftCorners.some(c => c.localIdx === localCornerIndex);
+            
+            // 在左侧或右侧的两个角中，按 Y 坐标判断上下
+            if (isLeft) {
+                // 在左侧两个角中找
+                const leftSorted = leftCorners.sort((a, b) => a.y - b.y);
+                const isTop = leftSorted[0].localIdx === localCornerIndex;
+                return isTop ? '左上角' : '左下角';
+            } else {
+                // 在右侧两个角中找
+                const rightSorted = rightCorners.sort((a, b) => a.y - b.y);
+                const isTop = rightSorted[0].localIdx === localCornerIndex;
+                return isTop ? '右上角' : '右下角';
+            }
+        } catch (error) {
+            console.error('[光标检测] 转换视觉位置失败:', error);
+            const localNames = ['左上角', '右上角', '右下角', '左下角'];
+            return localNames[localCornerIndex] || '未知';
         }
     }
 }
@@ -398,28 +647,18 @@ class CursorDetectionCache {
 const cursorFactory = CursorFactory.getInstance();
 const cursorDetectionCache = new CursorDetectionCache();
 
-// 设置光标样式（使用工厂模式，支持旋转）
+// 设置光标样式（使用工厂模式）
+// 注意：缩放光标不再需要旋转，因为 detectCornerPosition 已经返回了正确的视觉位置
+// 视觉位置已经考虑了图层的所有变换（旋转、翻转），所以光标类型直接对应视觉方向
 function setCursor(canvas: HTMLElement, cursorType: string, shareData?: ShareData) {
-    let rotationAngle = 0;
-    
-    // 如果是缩放光标且有选中图层，获取旋转角度
-    if (['nw-resize', 'ne-resize', 'sw-resize', 'se-resize'].includes(cursorType) && 
-        shareData && shareData.tgfxBaseView) {
-        try {
-            rotationAngle = (shareData.tgfxBaseView as any).getSelectedLayerRotation();
-            const rotationDegrees = rotationAngle * 180 / Math.PI;
-            // console.log(`[光标调试] 角位置: ${cursorType}, 旋转角度: ${rotationDegrees.toFixed(2)}°`);
-        } catch (error) {
-            console.error('获取旋转角度失败:', error);
-        }
-    }
-    
-    const cursor = cursorFactory.getCursor(cursorType, rotationAngle);
+    // 缩放光标不再需要额外旋转，直接使用系统光标
+    // 因为 cursorType 已经是基于视觉位置的（nw/ne/sw/se 对应视觉上的左上/右上/左下/右下）
+    const cursor = cursorFactory.getCursor(cursorType, 0);
     canvas.style.cursor = cursor;
 }
 
-const MIN_ZOOM = 0.01;
-const MAX_ZOOM = 1000.0;
+const MIN_ZOOM = InteractionConfig.MIN_ZOOM;
+const MAX_ZOOM = InteractionConfig.MAX_ZOOM;
 
 enum ScaleGestureState {
     SCALE_START = 0,
@@ -457,6 +696,12 @@ class ScaleStateManager {
     // 多选模式的翻转状态追踪（因为多选没有单一图层的翻转状态）
     private multiSelectionFlippedX = false;
     private multiSelectionFlippedY = false;
+    
+    // ========== 去旋转化策略所需的新字段 ==========
+    private cachedRotation = 0; // 缓存的旋转角度（弧度）
+    private initialLocalWidth = 0; // 初始局部宽度（从锚点到操作点）
+    private initialLocalHeight = 0; // 初始局部高度（从锚点到操作点）
+    private anchorWorldCoord: { x: number, y: number } | null = null; // 锚点的世界坐标（缓存）
 
     static getInstance(): ScaleStateManager {
         if (!ScaleStateManager.instance) {
@@ -465,12 +710,15 @@ class ScaleStateManager {
         return ScaleStateManager.instance;
     }
 
-    startScaling(startX: number, startY: number, centerX: number, centerY: number, cornerIdx: number, localX: number, localY: number, isMultiSelection = false, screenX?: number, screenY?: number): void {
+    startScaling(startX: number, startY: number, centerX: number, centerY: number, cornerIdx: number, localX: number, localY: number, isMultiSelection = false, screenX?: number, screenY?: number, shareData?: ShareData): void {
         this.isScaling = true;
         this.lastPoint = { x: startX, y: startY };
         this.cachedCenter = { x: centerX, y: centerY };
         this.cornerIndex = cornerIdx;  // 存储视觉位置索引，用于翻转判断
         this.isMultiSelectionMode = isMultiSelection; // 记录模式
+        
+        const cornerNames = ['左上角', '右上角', '右下角', '左下角'];
+        const cornerName = cornerNames[cornerIdx] || '未知';
         
         if (isMultiSelection) {
             // 多选模式：缓存对角点的屏幕坐标
@@ -478,22 +726,86 @@ class ScaleStateManager {
             this.oppositeCornerLocal = null;
             this.multiSelectionFlippedX = false;
             this.multiSelectionFlippedY = false;
-            console.log(`[缩放开始-多选] 操作角索引${cornerIdx}，对角点屏幕坐标：(${screenX!.toFixed(1)}, ${screenY!.toFixed(1)})`);
+            console.log(`[缩放开始] 多选模式，操作角：${cornerName}(索引${cornerIdx})`);
         } else {
             // 单选模式：缓存对角点的本地坐标
             this.oppositeCornerLocal = { x: localX, y: localY };
             this.oppositeCornerScreen = null;
-            console.log(`[缩放开始-单选] 操作角索引${cornerIdx}，对角点本地坐标：(${localX.toFixed(2)}, ${localY.toFixed(2)})`);
+            
+            // 缓存锚点的世界坐标
+            this.anchorWorldCoord = { x: centerX, y: centerY };
+            
+            // 获取旋转角度
+            if (shareData && shareData.tgfxBaseView) {
+                this.cachedRotation = (shareData.tgfxBaseView as any).getSelectedLayerRotation() || 0;
+            } else {
+                this.cachedRotation = 0;
+            }
+            
+            // 计算初始的局部宽高（将世界向量逆旋转到局部坐标系）
+            const worldDiffX = startX - centerX;
+            const worldDiffY = startY - centerY;
+            const cos = Math.cos(-this.cachedRotation);
+            const sin = Math.sin(-this.cachedRotation);
+            this.initialLocalWidth = worldDiffX * cos - worldDiffY * sin;
+            this.initialLocalHeight = worldDiffX * sin + worldDiffY * cos;
+            
+            console.log(`[缩放开始] 单选模式，操作角：${cornerName}(视觉索引${cornerIdx})，旋转：${(this.cachedRotation * 180 / Math.PI).toFixed(1)}°`);
         }
 
         const deltaX = startX - centerX;
         const deltaY = startY - centerY;
         this.lastDistance = Math.hypot(deltaX, deltaY);
     }
+    
+    // 获取缓存的旋转角度
+    getCachedRotation(): number {
+        return this.cachedRotation;
+    }
+    
+    // 获取初始局部宽高
+    getInitialLocalSize(): { width: number, height: number } {
+        return { width: this.initialLocalWidth, height: this.initialLocalHeight };
+    }
+    
+    // 获取锚点世界坐标
+    getAnchorWorldCoord(): { x: number, y: number } | null {
+        return this.anchorWorldCoord;
+    }
+
+    /**
+     * 初始化本地空间交互（新架构）
+     * 在点击时调用，缓存逆矩阵和边界信息
+     */
+    public initializeLocalSpaceInteraction(shareData: ShareData): boolean {
+        if (!shareData || !shareData.tgfxBaseView) {
+            console.error('[缩放状态] 无法初始化 LocalSpaceInteraction：shareData 或 tgfxBaseView 为空');
+            return false;
+        }
+        
+        // 缓存逆矩阵和边界信息（仅在单选模式）
+        if (!this.isMultiSelectionMode) {
+            return localSpaceInteraction.cacheInverseMatrix(shareData);
+        }
+        
+        return true;
+    }
+    
+    /**
+     * 根据本地空间坐标找出当前操作的角
+     */
+    public findCornerByLocalCoord(localX: number, localY: number): number {
+        return localSpaceInteraction.findNearestCornerIndex(localX, localY, 20);
+    }
+    
+    /**
+     * 清除本地空间交互缓存
+     */
+    public clearLocalSpaceCache(): void {
+        localSpaceInteraction.clearCache();
+    }
 
     endScaling(): void {
-        // console.log(`[缩放结束] 操作完成`);
-        
         this.isScaling = false;
         this.cachedCenter = null;
         this.cornerIndex = -1;
@@ -503,6 +815,19 @@ class ScaleStateManager {
         this.isMultiSelectionMode = false;
         this.multiSelectionFlippedX = false;
         this.multiSelectionFlippedY = false;
+        // 重置单选翻转状态
+        this.singleSelectionFlippedX = false;
+        this.singleSelectionFlippedY = false;
+        // 重置去旋转化字段
+        this.cachedRotation = 0;
+        this.initialLocalWidth = 0;
+        this.initialLocalHeight = 0;
+        this.anchorWorldCoord = null;
+        this.lastLocalWidth = 0;
+        this.lastLocalHeight = 0;
+        
+        // 清除本地空间缓存
+        this.clearLocalSpaceCache();
     }
 
     isInScaling(): boolean {
@@ -534,8 +859,6 @@ class ScaleStateManager {
         const shouldFlipX = this.shouldFlipX(currentX, oppositeCenterX);
         const shouldFlipY = this.shouldFlipY(currentY, oppositeCenterY);
         
-        console.log(`[多选缩放-计算] 鼠标:(${currentX.toFixed(1)}, ${currentY.toFixed(1)})，对角点:(${oppositeCenterX.toFixed(1)}, ${oppositeCenterY.toFixed(1)})，偏移向量:(${deltaX.toFixed(1)}, ${deltaY.toFixed(1)})`);
-        
         // 根据翻转状态调整向量方向，计算有效距离
         const effectiveDeltaX = shouldFlipX ? -deltaX : deltaX;
         const effectiveDeltaY = shouldFlipY ? -deltaY : deltaY;
@@ -543,7 +866,6 @@ class ScaleStateManager {
         
         if (this.lastDistance === 0) {
             this.lastDistance = currentDistance;
-            console.log(`[多选缩放-计算] 初始化距离: ${currentDistance.toFixed(2)}`);
             return { scaleX: 1.0, scaleY: 1.0 };
         }
         
@@ -556,26 +878,17 @@ class ScaleStateManager {
         
         if (needFlipX || needFlipY) {
             // 发生翻转
-            const cornerNames = ['左上角', '右上角', '右下角', '左下角'];
-            const visualCornerName = cornerNames[this.cornerIndex] || '未知';
-            console.log(`\n[多选缩放-翻转] ==================`);
-            console.log(`[多选缩放-翻转] 操作角：${visualCornerName} (索引${this.cornerIndex})`);
-            console.log(`[多选缩放-翻转] 鼠标位置：(${currentX.toFixed(2)}, ${currentY.toFixed(2)})`);
-            console.log(`[多选缩放-翻转] 对角点位置：(${oppositeCenterX.toFixed(2)}, ${oppositeCenterY.toFixed(2)})`);
-            
             if (needFlipX) {
                 scaleX = -1.0;
                 this.multiSelectionFlippedX = shouldFlipX;
-                console.log(`[多选缩放-翻转] X轴翻转: ${!shouldFlipX} -> ${shouldFlipX}`);
             }
             if (needFlipY) {
                 scaleY = -1.0;
                 this.multiSelectionFlippedY = shouldFlipY;
-                console.log(`[多选缩放-翻转] Y轴翻转: ${!shouldFlipY} -> ${shouldFlipY}`);
             }
-            console.log(`[多选缩放-翻转] ==================\n`);
+            console.log(`[翻转] 多选模式 X:${needFlipX} Y:${needFlipY}`);
             
-            // ⭐ 关键：同步翻转状态到旋转管理器，以便旋转时正确反转方向
+            // 同步翻转状态到旋转管理器
             rotationStateManager.setMultiSelectionFlipState(this.multiSelectionFlippedX, this.multiSelectionFlippedY);
             
             this.lastDistance = Math.max(currentDistance, Number.EPSILON);
@@ -584,7 +897,6 @@ class ScaleStateManager {
             const scaleFactor = currentDistance / this.lastDistance;
             scaleX = scaleFactor;
             scaleY = scaleFactor;
-            console.log(`[多选缩放-计算] 正常缩放: 当前距离=${currentDistance.toFixed(2)}, 上次距离=${this.lastDistance.toFixed(2)}, 缩放因子=${scaleFactor.toFixed(4)}`);
             this.lastDistance = currentDistance;
         }
         
@@ -593,77 +905,69 @@ class ScaleStateManager {
         return { scaleX, scaleY };
     }
 
-    // 计算增量缩放因子（基于鼠标到对角点的距离变化），并检测翻转（仅单选模式）
+    // 单选模式翻转状态追踪
+    private singleSelectionFlippedX = false;
+    private singleSelectionFlippedY = false;
+    // 去旋转化：上一帧的局部宽高
+    private lastLocalWidth = 0;
+    private lastLocalHeight = 0;
+
+    /**
+     * 计算增量缩放因子
+     * 
+     * 简化策略：直接使用世界坐标中鼠标到对角点的距离变化来计算缩放因子
+     * 翻转检测基于鼠标是否越过对角点
+     */
     calculateIncrementalScaleFactor(currentX: number, currentY: number, oppositeCenterX: number, oppositeCenterY: number): { scaleX: number, scaleY: number } {
-        // 计算当前鼠标相对于对角点的向量
+        // 1. 计算当前鼠标相对于对角点的向量
         const deltaX = currentX - oppositeCenterX;
         const deltaY = currentY - oppositeCenterY;
         
-        // 判断是否应该翻转（基于鼠标相对对角点的位置）
+        // 2. 检测翻转（基于鼠标相对于对角点的位置）
         const shouldFlipX = this.shouldFlipX(currentX, oppositeCenterX);
         const shouldFlipY = this.shouldFlipY(currentY, oppositeCenterY);
         
-        // 获取当前图层的翻转状态（从C++读取）
-        const flipStateVector = (shareData.tgfxBaseView as any).getSelectedLayerFlipState();
-        let currentFlippedX = false;
-        let currentFlippedY = false;
-        if (flipStateVector && flipStateVector.size && flipStateVector.size() >= 2) {
-            currentFlippedX = flipStateVector.get(0) > 0.5;
-            currentFlippedY = flipStateVector.get(1) > 0.5;
-        }
-        
-        // 打印翻转判断详情（每10帧打印一次，避免刷屏）
-        if (performance.now() % 100 < 16) {
-            const cornerNames = ['左上角', '右上角', '右下角', '左下角'];
-            const visualCornerName = cornerNames[this.cornerIndex] || '未知';
-            // console.log(`[翻转判断] 视觉操作角：${visualCornerName}(索引${this.cornerIndex})，鼠标:(${currentX.toFixed(1)},${currentY.toFixed(1)})，对角点:(${oppositeCenterX.toFixed(1)},${oppositeCenterY.toFixed(1)})`);
-            // console.log(`[翻转判断] 当前状态：FlipX=${currentFlippedX}, FlipY=${currentFlippedY}，应该状态：shouldFlipX=${shouldFlipX}, shouldFlipY=${shouldFlipY}`);
-        }
-        
-        // 根据翻转状态调整向量方向，计算有效距离
+        // 3. 根据翻转状态调整向量方向，计算有效距离
         const effectiveDeltaX = shouldFlipX ? -deltaX : deltaX;
         const effectiveDeltaY = shouldFlipY ? -deltaY : deltaY;
         const currentDistance = Math.hypot(effectiveDeltaX, effectiveDeltaY);
         
+        // 4. 初始化
         if (this.lastDistance === 0) {
-            // 第一次调用，初始化距离
             this.lastDistance = currentDistance;
+            this.singleSelectionFlippedX = false;
+            this.singleSelectionFlippedY = false;
             return { scaleX: 1.0, scaleY: 1.0 };
         }
         
         let scaleX = 1.0;
         let scaleY = 1.0;
         
-        // 检查是否需要翻转（当前应该翻转 != 实际已翻转）
-        const needFlipX = shouldFlipX !== currentFlippedX;
-        const needFlipY = shouldFlipY !== currentFlippedY;
+        // 5. 检查是否需要翻转
+        const needFlipX = shouldFlipX !== this.singleSelectionFlippedX;
+        const needFlipY = shouldFlipY !== this.singleSelectionFlippedY;
         
         if (needFlipX || needFlipY) {
             // 发生翻转
-            const cornerNames = ['左上角', '右上角', '右下角', '左下角'];
-            const visualCornerName = cornerNames[this.cornerIndex] || '未知';
-            // console.log(`\n[翻转发生] ==================`);
-            // console.log(`[翻转发生] 视觉操作角：${visualCornerName} (索引${this.cornerIndex})`);
-            // console.log(`[翻转发生] 鼠标位置：(${currentX.toFixed(2)}, ${currentY.toFixed(2)})`);
-            // console.log(`[翻转发生] 对角点位置：(${oppositeCenterX.toFixed(2)}, ${oppositeCenterY.toFixed(2)})`);
-            
             if (needFlipX) {
                 scaleX = -1.0;
-                // console.log(`[翻转发生] X轴翻转: ${currentFlippedX} -> ${shouldFlipX}`);
+                this.singleSelectionFlippedX = shouldFlipX;
             }
             if (needFlipY) {
                 scaleY = -1.0;
-                // console.log(`[翻转发生] Y轴翻转: ${currentFlippedY} -> ${shouldFlipY}`);
+                this.singleSelectionFlippedY = shouldFlipY;
             }
-            // console.log(`[翻转发生] ==================\n`);
+            console.log(`[翻转] 单选模式 X:${needFlipX} Y:${needFlipY}`);
             
+            // 翻转后重置距离基准
             this.lastDistance = Math.max(currentDistance, Number.EPSILON);
         } else {
-            // 没有翻转，正常计算缩放因子
-            const scaleFactor = currentDistance / this.lastDistance;
-            scaleX = scaleFactor;
-            scaleY = scaleFactor;
-            // 更新上一帧的距离
+            // 6. 没有翻转，正常计算缩放因子
+            if (this.lastDistance > Number.EPSILON) {
+                const scaleFactor = currentDistance / this.lastDistance;
+                scaleX = scaleFactor;
+                scaleY = scaleFactor;
+            }
             this.lastDistance = currentDistance;
         }
         
@@ -672,30 +976,50 @@ class ScaleStateManager {
         return { scaleX, scaleY };
     }
     
-    // 检测X轴是否应该翻转（基于当前角的初始位置）
-    private shouldFlipX(currentX: number, centerX: number): boolean {
-        // 根据角索引判断是左侧还是右侧
-        const isLeftCorner = (this.cornerIndex === 0 || this.cornerIndex === 3);
+    // 旧的缩放计算方法（作为回退）- 不再需要，保留以防万一
+    private calculateIncrementalScaleFactorLegacy(currentX: number, currentY: number, oppositeCenterX: number, oppositeCenterY: number): { scaleX: number, scaleY: number } {
+        const deltaX = currentX - oppositeCenterX;
+        const deltaY = currentY - oppositeCenterY;
+        const currentDistance = Math.hypot(deltaX, deltaY);
         
-        if (isLeftCorner) {
-            // 左侧角 -> 鼠标在中心点右侧时表示翻转
+        if (this.lastDistance === 0) {
+            this.lastDistance = currentDistance;
+            return { scaleX: 1.0, scaleY: 1.0 };
+        }
+        
+        const scaleFactor = currentDistance / this.lastDistance;
+        this.lastDistance = currentDistance;
+        this.lastPoint = { x: currentX, y: currentY };
+        
+        return { scaleX: scaleFactor, scaleY: scaleFactor };
+    }
+    
+    // 检测X轴是否应该翻转（基于当前鼠标相对于中心点的位置）
+    // cornerIndex 现在是视觉索引：0=视觉左上, 1=视觉右上, 2=视觉右下, 3=视觉左下
+    private shouldFlipX(currentX: number, centerX: number): boolean {
+        // 基于视觉位置判断翻转
+        // 视觉左侧操作（视觉左上0、视觉左下3）-> 鼠标在固定点右侧时翻转
+        // 视觉右侧操作（视觉右上1、视觉右下2）-> 鼠标在固定点左侧时翻转
+        const isVisualLeftCorner = (this.cornerIndex === 0 || this.cornerIndex === 3);
+        
+        if (isVisualLeftCorner) {
             return currentX > centerX;
         } else {
-            // 右侧角 -> 鼠标在中心点左侧时表示翻转
             return currentX < centerX;
         }
     }
     
-    // 检测Y轴是否应该翻转（基于当前角的初始位置）
+    // 检测Y轴是否应该翻转（基于当前鼠标相对于中心点的位置）
+    // cornerIndex 现在是视觉索引：0=视觉左上, 1=视觉右上, 2=视觉右下, 3=视觉左下
     private shouldFlipY(currentY: number, centerY: number): boolean {
-        // 根据角索引判断是上侧还是下侧
-        const isTopCorner = (this.cornerIndex === 0 || this.cornerIndex === 1);
+        // 基于视觉位置判断翻转
+        // 视觉上侧操作（视觉左上0、视觉右上1）-> 鼠标在固定点下方时翻转
+        // 视觉下侧操作（视觉右下2、视觉左下3）-> 鼠标在固定点上方时翻转
+        const isVisualTopCorner = (this.cornerIndex === 0 || this.cornerIndex === 1);
         
-        if (isTopCorner) {
-            // 上侧角 -> 鼠标在中心点下方时表示翻转
+        if (isVisualTopCorner) {
             return currentY > centerY;
         } else {
-            // 下侧角 -> 鼠标在中心点上方时表示翻转
             return currentY < centerY;
         }
     }
@@ -707,14 +1031,14 @@ const scaleStateManager = ScaleStateManager.getInstance();
 class BoxSelectionManager {
     private isSelecting = false;
     private hasDragStarted = false;
-    private isPrepared = false;  // 标记是否已准备好框选（只有在点击空白区域时才为true）
+    private isPrepared = false;
     private startScreenX = 0;
     private startScreenY = 0;
     private startWorldX = 0;
     private startWorldY = 0;
-    private minDragDistance = 20;  // 20像素阈值（稍微增加拖动距离，避免误触发）
-    private minPressTime = 300;    // 最小按压时间（毫秒）- 降低到300ms，更灵敏
-    private pressStartTime = 0;    // 按下时的时间戳
+    private minDragDistance = InteractionConfig.BOX_SELECTION_MIN_DRAG;
+    private minPressTime = InteractionConfig.BOX_SELECTION_MIN_PRESS;
+    private pressStartTime = 0;
 
     // 记录初始点击位置（只在点击空白区域时调用）
     onMouseDown(screenX: number, screenY: number, worldX: number, worldY: number): void {
@@ -723,14 +1047,12 @@ class BoxSelectionManager {
         this.startWorldX = worldX;
         this.startWorldY = worldY;
         this.hasDragStarted = false;
-        this.isPrepared = true;  // 标记已准备好框选
-        this.pressStartTime = Date.now();  // 记录按下时间
-        // console.log('[框选管理器] 准备框选，起点：', screenX, screenY);
+        this.isPrepared = true;
+        this.pressStartTime = Date.now();
     }
 
     // 判断是否应该启动框选
     onMouseMove(currentScreenX: number, currentScreenY: number, worldX: number, worldY: number, shareData: ShareData): void {
-        // 如果没有准备好框选（例如点击的是图层），不启动框选
         if (!this.isPrepared) {
             return;
         }
@@ -740,23 +1062,15 @@ class BoxSelectionManager {
         const distance = Math.sqrt(dx * dx + dy * dy);
         const pressDuration = Date.now() - this.pressStartTime;
 
-        // 满足以下任一条件即可启动框选（OR逻辑）：
-        // 1. 拖动距离超过阈值（快速拖动）
-        // 2. 按压时间足够长（长按）
         if (!this.hasDragStarted && (distance > this.minDragDistance || pressDuration > this.minPressTime)) {
-            // 超过阈值，启动框选
             this.hasDragStarted = true;
             this.isSelecting = true;
             
-            // 清除现有的选中状态（包括单选边框和角控制器）
             (shareData.tgfxBaseView as any).resetSelectedLayer();
-            
             (shareData.tgfxBaseView as any).startBoxSelection(this.startWorldX, this.startWorldY);
-            console.log(`[框选] 启动框选，起点：(${this.startWorldX.toFixed(2)}, ${this.startWorldY.toFixed(2)})，距离：${distance.toFixed(1)}px，按压：${pressDuration}ms`);
         }
 
         if (this.isSelecting) {
-            // 更新框选框
             (shareData.tgfxBaseView as any).updateBoxSelection(worldX, worldY);
         }
     }
@@ -765,15 +1079,12 @@ class BoxSelectionManager {
     onMouseUp(shareData: ShareData): void {
         if (this.isSelecting) {
             (shareData.tgfxBaseView as any).endBoxSelection();
-            console.log('[框选] 结束框选，强制标记重绘');
-            
-            // 强制标记脏并触发重绘，确保框选框被清除
             shareData.tgfxBaseView?.markDirty();
         }
 
         this.isSelecting = false;
         this.hasDragStarted = false;
-        this.isPrepared = false;  // 重置准备状态
+        this.isPrepared = false;
     }
 
     isBoxSelecting(): boolean {
@@ -820,16 +1131,12 @@ class RotationStateManager {
     }
 
     startRotation(startX: number, startY: number, centerX: number, centerY: number, currentLayerId?: string): void {
-        // 检测是否为多选模式（通过ID识别）
         const isMultiSelection = currentLayerId === '__MULTI_SELECTION__';
         
-        // 如果选中了新的图层，重置旋转状态
         if (currentLayerId && currentLayerId !== this.lastSelectedLayerId) {
-            // console.log(`[旋转状态] 检测到新图层，重置旋转累积值`);
             this.totalRotation = 0;
             this.lastSelectedLayerId = currentLayerId;
             
-            // 多选模式重置翻转状态
             if (isMultiSelection) {
                 this.multiSelectionFlippedX = false;
                 this.multiSelectionFlippedY = false;
@@ -840,9 +1147,7 @@ class RotationStateManager {
         this.isMultiSelectionMode = isMultiSelection;
         this.lastPoint = { x: startX, y: startY };
         this.cachedCenter = { x: centerX, y: centerY };
-        // 不在这里重置 totalRotation，保留上面的逻辑
         this.cachedDistance = Math.hypot(startX - centerX, startY - centerY);
-        // console.log(`[旋转状态] 开始旋转，${isMultiSelection ? '多选' : '单选'}模式，缓存中心点：(${centerX}, ${centerY})，半径：${this.cachedDistance.toFixed(2)}`);
     }
 
     endRotation(): void {
@@ -853,7 +1158,7 @@ class RotationStateManager {
         this.multiSelectionFlippedX = false;
         this.multiSelectionFlippedY = false;
         
-        // console.log(`[旋转状态] 结束旋转，总旋转角度：${(this.totalRotation * 180 / Math.PI).toFixed(2)}°`);
+        localSpaceInteraction.clearCache();
     }
 
     isInRotation(): boolean {
@@ -890,50 +1195,37 @@ class RotationStateManager {
         const lastX = this.lastPoint.x;
         const lastY = this.lastPoint.y;
         
-        // 计算上一个位置和当前位置相对于中心点的向量
         const lastVector = { x: lastX - centerX, y: lastY - centerY };
         const currentVector = { x: currentX - centerX, y: currentY - centerY };
 
-        // 避免半径过小导致数值不稳定
         const lastRadius = Math.hypot(lastVector.x, lastVector.y);
         const currentRadius = Math.hypot(currentVector.x, currentVector.y);
         const fallbackRadius = Math.max(this.cachedDistance, Number.EPSILON);
-        const minRadius = Math.max(fallbackRadius * 0.25, 1e-3);
+        const minRadius = Math.max(fallbackRadius * InteractionConfig.MIN_ROTATION_RADIUS_FACTOR, InteractionConfig.MIN_ABSOLUTE_RADIUS);
         if (lastRadius < minRadius || currentRadius < minRadius) {
             console.warn('[旋转] 半径过小，忽略此次旋转增量');
             return 0;
         }
         
-        // 计算角度差（增量）
         const lastAngle = Math.atan2(lastVector.y, lastVector.x);
         const currentAngle = Math.atan2(currentVector.y, currentVector.x);
         
         let deltaAngle = currentAngle - lastAngle;
         
-        // 处理角度跨越-π到π的边界情况
         if (deltaAngle > Math.PI) {
             deltaAngle -= 2 * Math.PI;
         } else if (deltaAngle < -Math.PI) {
             deltaAngle += 2 * Math.PI;
         }
 
-        // 详细的调试输出
-        const lastAngleDeg = lastAngle * 180 / Math.PI;
-        const currentAngleDeg = currentAngle * 180 / Math.PI;
-        const originalDeltaAngleDeg = deltaAngle * 180 / Math.PI;
-        let deltaAngleDeg = originalDeltaAngleDeg;
-        let accumulatedAngleDeg = (this.totalRotation + deltaAngle) * 180 / Math.PI;
-
         // 获取翻转状态（单选/多选分别处理）
         let isFlippedX = false;
         let isFlippedY = false;
         
         if (this.isMultiSelectionMode) {
-            // 多选模式：使用自己追踪的翻转状态
             isFlippedX = this.multiSelectionFlippedX;
             isFlippedY = this.multiSelectionFlippedY;
         } else if (shareData) {
-            // 单选模式：从C++读取当前图层的翻转状态
             const flipStateVector = (shareData.tgfxBaseView as any).getSelectedLayerFlipState();
             if (flipStateVector && flipStateVector.size && flipStateVector.size() >= 2) {
                 isFlippedX = flipStateVector.get(0) > 0.5;
@@ -941,33 +1233,10 @@ class RotationStateManager {
             }
         }
         
-        // 添加向量计算的调试输出
-        // console.log(`[旋转角度] 上次向量: (${lastVector.x.toFixed(1)}, ${lastVector.y.toFixed(1)}), 当前向量: (${currentVector.x.toFixed(1)}, ${currentVector.y.toFixed(1)})`);
-        // console.log(`[旋转角度] 原始角度变化: ${originalDeltaAngleDeg.toFixed(4)}°`);
-        
         // 只有当有奇数个轴翻转时，才需要反转旋转方向
-        // 根据翻转状态调整旋转方向
-        // 经过测试发现：X=true,Y=false 时需要反转，Y=true,X=false 时也需要反转
-        if (isFlippedX && !isFlippedY) {
-            // 只有X轴翻转时，需要反转旋转方向
+        if ((isFlippedX && !isFlippedY) || (isFlippedY && !isFlippedX)) {
             deltaAngle = -deltaAngle;
-            deltaAngleDeg = -deltaAngleDeg;
-            accumulatedAngleDeg = (this.totalRotation + deltaAngle) * 180 / Math.PI;
-            // console.log(`[旋转角度] 检测到X轴翻转，反转旋转方向: ${originalDeltaAngleDeg.toFixed(4)}° -> ${deltaAngleDeg.toFixed(4)}°`);
-        } else if (isFlippedY && !isFlippedX) {
-            // 只有Y轴翻转时，需要反转旋转方向
-            deltaAngle = -deltaAngle;
-            deltaAngleDeg = -deltaAngleDeg;
-            accumulatedAngleDeg = (this.totalRotation + deltaAngle) * 180 / Math.PI;
-            // console.log(`[旋转角度] 检测到Y轴翻转，反转旋转方向: ${originalDeltaAngleDeg.toFixed(4)}° -> ${deltaAngleDeg.toFixed(4)}°`);
-        } else {
-            // console.log(`[旋转角度] 双轴翻转或无翻转，保持旋转方向: ${deltaAngleDeg.toFixed(4)}°`);
         }
-        
-        // console.log(`[旋转角度] ${this.isMultiSelectionMode ? '多选' : '单选'}翻转状态: X=${isFlippedX}, Y=${isFlippedY}`);
-        // console.log(`[旋转角度] 鼠标从(${lastX.toFixed(1)}, ${lastY.toFixed(1)})移动到(${currentX.toFixed(1)}, ${currentY.toFixed(1)})`);
-        // console.log(`[旋转角度] 中心点(${centerX.toFixed(1)}, ${centerY.toFixed(1)})`);
-        // console.log(`[旋转角度] 上次角度: ${lastAngleDeg.toFixed(2)}°, 当前角度: ${currentAngleDeg.toFixed(2)}°, 变化: ${deltaAngleDeg.toFixed(4)}°, 累计: ${accumulatedAngleDeg.toFixed(2)}°`);
 
         this.totalRotation += deltaAngle;
         this.lastPoint = { x: currentX, y: currentY };
@@ -993,17 +1262,17 @@ export type ZoomChangeCallback = (zoom: number) => void;
 export class GestureManager {
     private scaleY = 1.0;
     private zoomChangeCallbacks: ZoomChangeCallback[] = [];
-    private pinchTimeout = 150; // 毫秒
+    private pinchTimeout = InteractionConfig.PINCH_TIMEOUT;
     private timer: number | undefined;
     private scaleStartZoom = 1.0;
 
     private lastEventTime = 0;
     private lastDeltaY = 0;
-    private timeThreshold = 50; // 毫秒
-    private deltaYThreshold = 50;
-    private deltaYChangeThreshold = 10;
-    private mouseWheelRatio = 800;
-    private touchWheelRatio = 100;
+    private timeThreshold = InteractionConfig.TIME_THRESHOLD;
+    private deltaYThreshold = InteractionConfig.DELTA_Y_THRESHOLD;
+    private deltaYChangeThreshold = InteractionConfig.DELTA_Y_CHANGE_THRESHOLD;
+    private mouseWheelRatio = InteractionConfig.MOUSE_WHEEL_RATIO;
+    private touchWheelRatio = InteractionConfig.TOUCH_WHEEL_RATIO;
 
     private handleScrollEvent(
         event: WheelEvent,
@@ -1086,7 +1355,7 @@ export class GestureManager {
                 currentWorldCoords.worldX - cachedCenter.x,
                 currentWorldCoords.worldY - cachedCenter.y
             );
-            const minimumUsableRadius = Math.max(radius * 0.25, 1e-3);
+            const minimumUsableRadius = Math.max(radius * InteractionConfig.MIN_ROTATION_RADIUS_FACTOR, InteractionConfig.MIN_ABSOLUTE_RADIUS);
             if (currentRadius < minimumUsableRadius) {
                 console.warn('[旋转JS] 当前半径过小，忽略旋转');
                 return;
@@ -1096,28 +1365,18 @@ export class GestureManager {
             const deltaAngle = rotationStateManager.calculateIncrementalRotationAngle(
                 currentWorldCoords.worldX, currentWorldCoords.worldY, shareData
             );
-
-            const angleDegrees = deltaAngle * 180 / Math.PI;
             
-            if (Math.abs(deltaAngle) > 0) { // 只要有角度变化就旋转
-                // 检测是否处于多选模式
+            if (Math.abs(deltaAngle) > 0) {
                 const isMultiSelection = (shareData.tgfxBaseView as any).isInMultiSelectionMode && 
                                          (shareData.tgfxBaseView as any).isInMultiSelectionMode();
                 
                 if (isMultiSelection) {
-                    // console.log(`[旋转JS-多选] 执行旋转 - 角度: ${angleDegrees.toFixed(4)}°`);
-                    // 多选模式：调用多选旋转方法
                     (shareData.tgfxBaseView as any).rotateMultiSelection(deltaAngle);
                 } else {
-                    // console.log(`[旋转JS-单选] 执行旋转 - 角度: ${angleDegrees.toFixed(4)}°`);
-                    // 单选模式：调用单选旋转方法，让C++使用本地几何中心
                     (shareData.tgfxBaseView as any).rotateSelectedLayer(deltaAngle, Number.NaN, Number.NaN);
                 }
                 
-                // 标记需要重绘
                 shareData.tgfxBaseView?.markDirty();
-            } else {
-                // console.log(`[旋转JS] 无角度变化，跳过旋转`);
             }
 
         } catch (error) {
@@ -1143,7 +1402,7 @@ export class GestureManager {
             let scaleFactors: { scaleX: number, scaleY: number };
             
             if (isMultiSelection) {
-                // ========== 多选模式：使用缓存的屏幕坐标，每帧转换为世界坐标 ==========
+                // 多选模式：使用缓存的屏幕坐标，每帧转换为世界坐标
                 const oppositeCornerScreen = scaleStateManager.getOppositeCornerScreen();
                 if (!oppositeCornerScreen) {
                     console.error('[缩放JS-多选] 无法获取对角点屏幕坐标');
@@ -1157,11 +1416,7 @@ export class GestureManager {
                 oppositeCenterX = oppositeWorldCoords.worldX;
                 oppositeCenterY = oppositeWorldCoords.worldY;
                 
-                console.log(`[多选缩放-移动中] 对角点屏幕坐标：(${oppositeCornerScreen.x.toFixed(1)}, ${oppositeCornerScreen.y.toFixed(1)}) -> 世界坐标：(${oppositeCenterX.toFixed(1)}, ${oppositeCenterY.toFixed(1)})`);
-                console.log(`[多选缩放-移动中] 鼠标世界坐标：(${currentX.toFixed(1)}, ${currentY.toFixed(1)})`);
-                console.log(`[多选缩放-移动中] 当前缩放参数: zoom=${shareData.zoom.toFixed(3)}, offsetX=${shareData.offsetX.toFixed(1)}, offsetY=${shareData.offsetY.toFixed(1)}`);
-                
-                // 多选模式使用简化的缩放计算（不支持翻转）
+                // 多选模式使用简化的缩放计算
                 scaleFactors = scaleStateManager.calculateMultiSelectionScale(
                     currentX, currentY, oppositeCenterX, oppositeCenterY
                 );
@@ -1190,23 +1445,19 @@ export class GestureManager {
                 );
             }
             
-            if (Math.abs(scaleFactors.scaleX - 1.0) > 0.0001 || Math.abs(scaleFactors.scaleY - 1.0) > 0.0001) { // 只有缩放变化超过阈值才执行
+            if (Math.abs(scaleFactors.scaleX - 1.0) > InteractionConfig.SCALE_CHANGE_THRESHOLD || 
+                Math.abs(scaleFactors.scaleY - 1.0) > InteractionConfig.SCALE_CHANGE_THRESHOLD) {
                 if (isMultiSelection) {
-                    // console.log(`[缩放JS-多选] 应用缩放：scaleX=${scaleFactors.scaleX.toFixed(4)}, scaleY=${scaleFactors.scaleY.toFixed(4)}`);
-                    // 多选模式：调用多选缩放方法，使用世界坐标作为枢轴
                     (shareData.tgfxBaseView as any).scaleMultiSelection(
                         scaleFactors.scaleX, scaleFactors.scaleY, oppositeCenterX, oppositeCenterY
                     );
                 } else {
                     const localCorner = scaleStateManager.getOppositeCornerLocal()!;
-                    // console.log(`[缩放JS-单选] 应用缩放：scaleX=${scaleFactors.scaleX.toFixed(4)}, scaleY=${scaleFactors.scaleY.toFixed(4)}，枢轴本地坐标：(${localCorner.x.toFixed(2)}, ${localCorner.y.toFixed(2)})`);
-                    // 单选模式：调用单选缩放方法，使用本地坐标作为枢轴
                     (shareData.tgfxBaseView as any).scaleSelectedLayerWithLocalPivot(
                         scaleFactors.scaleX, scaleFactors.scaleY, localCorner.x, localCorner.y
                     );
                 }
                 
-                // 标记需要重绘
                 shareData.tgfxBaseView?.markDirty();
             }
 
@@ -1343,12 +1594,9 @@ export class GestureManager {
             return;
         }
 
-        // 鼠标悬停时的高亮和光标更新
-        // console.log(`[高亮] 鼠标悬停检测 - isMouseDown=${isMouseDown}, isInRotation=${rotationStateManager.isInRotation()}, isInScaling=${scaleStateManager.isInScaling()}`);
         const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
         const reDraw = shareData.tgfxBaseView?.highlightLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
         if (reDraw) {
-            // console.log(`[高亮] 鼠标悬停 - 创建新高亮`);
             shareData.tgfxBaseView?.markDirty();
             animationLoop(shareData);
         }
@@ -1357,7 +1605,7 @@ export class GestureManager {
         setCursor(canvas, cursorType, shareData);
     }
 
-    public onMouseLeave(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
+    public onMouseLeave(_event: MouseEvent, _canvas: HTMLElement, _shareData: ShareData) {
         // 鼠标离开canvas时的处理
     }
 
@@ -1374,8 +1622,7 @@ export class GestureManager {
                 cursorType === 'sw-resize' || cursorType === 'se-resize') {
                 
                 const cornerInfo = cursorDetectionCache.detectCornerPosition(clientXY.clientX, clientXY.clientY, shareData);
-                if (cornerInfo && cornerInfo.distance < 8) { // 确保在角控制器上
-                    // console.log(`[缩放] 开始缩放操作，检测到的角位置：${cornerInfo.position}`);
+                if (cornerInfo && cornerInfo.distance < 8) {
                     
                     // 获取检测到位置的索引（这就是用户看到的位置）
                     const cornerIndexMap: { [key: string]: number } = {
@@ -1388,39 +1635,18 @@ export class GestureManager {
                                              (shareData.tgfxBaseView as any).isInMultiSelectionMode();
                     
                     if (isMultiSelection) {
-                        // ========== 多选模式的缩放逻辑 ==========
-                        
-                        // 多选模式：使用AABB的对角点作为固定点
+                        // 多选模式的缩放逻辑
                         const oppositeCornerIdx = (detectedIdx + 2) % 4;
                         
-                        // 获取所有角的坐标（AABB的4个角）- 现在是世界坐标！
                         const cornersVector = (shareData.tgfxBaseView as any).getSelectedLayerCorners();
                         if (cornersVector && typeof cornersVector.size === 'function' && cornersVector.size() >= 8) {
-                            // 获取对角点的世界坐标
                             const oppositeCenterX = cornersVector.get(oppositeCornerIdx * 2);
                             const oppositeCenterY = cornersVector.get(oppositeCornerIdx * 2 + 1);
                             
-                            // 将对角点世界坐标转换为屏幕坐标（用于缓存）
                             const oppositeScreenCoords = CoordinateTransformer.worldToScreen(
                                 oppositeCenterX, oppositeCenterY, shareData
                             );
                             
-                            // 打印所有4个角的坐标
-                            console.log(`\n========== [多选缩放-开始] ==========`);
-                            console.log(`[多选缩放] 点击的角：${cornerInfo.position} (索引${detectedIdx})`);
-                            console.log(`[多选缩放] 对角点：索引${oppositeCornerIdx}`);
-                            console.log(`[多选缩放] AABB 4个角的世界坐标：`);
-                            console.log(`  - 索引0 (左上角): (${cornersVector.get(0).toFixed(1)}, ${cornersVector.get(1).toFixed(1)})`);
-                            console.log(`  - 索引1 (右上角): (${cornersVector.get(2).toFixed(1)}, ${cornersVector.get(3).toFixed(1)})`);
-                            console.log(`  - 索引2 (右下角): (${cornersVector.get(4).toFixed(1)}, ${cornersVector.get(5).toFixed(1)})`);
-                            console.log(`  - 索引3 (左下角): (${cornersVector.get(6).toFixed(1)}, ${cornersVector.get(7).toFixed(1)})`);
-                            console.log(`[多选缩放] 固定对角点世界坐标：(${oppositeCenterX.toFixed(1)}, ${oppositeCenterY.toFixed(1)})`);
-                            console.log(`[多选缩放] 固定对角点屏幕坐标：(${oppositeScreenCoords.screenX.toFixed(1)}, ${oppositeScreenCoords.screenY.toFixed(1)})`);
-                            console.log(`[多选缩放] 当前缩放参数: zoom=${shareData.zoom.toFixed(3)}, offsetX=${shareData.offsetX.toFixed(1)}, offsetY=${shareData.offsetY.toFixed(1)}`);
-                            console.log(`====================================\n`);
-                            
-                            // 取消高亮
-                            // console.log(`[高亮] 多选缩放开始 - 取消高亮`);
                             shareData.tgfxBaseView?.resetHighlightLayer();
                             
                             // 开始缩放状态，传入屏幕坐标（多选模式使用）
@@ -1441,16 +1667,16 @@ export class GestureManager {
                         }
                     } else {
                         // ========== 单选模式的缩放逻辑 ==========
-                        // 获取这个位置在原始坐标系中的实际角名称和索引
-                        // 用于翻转判断（左侧/右侧、上侧/下侧）
-                        const actualCornerName = (shareData.tgfxBaseView as any).getCornerNameByPosition(detectedIdx);
-                        const actualCornerIdx = cornerIndexMap[actualCornerName] ?? detectedIdx;
+                        // cornerInfo.position 现在返回的是视觉位置名称
+                        // cornerInfo.localCornerIndex 是本地坐标空间中的角索引
                         
-                        // console.log(`[缩放-单选] 检测角索引${detectedIdx}(${cornerInfo.position}) -> 原始角索引${actualCornerIdx}(${actualCornerName})`);
+                        const localCornerIdx = cornerInfo.localCornerIndex;
                         
-                        // 使用检测到的索引计算对角点（视觉上的对角）
-                        const oppositeCornerIdx = (detectedIdx + 2) % 4;
-                        const localCornerVector = (shareData.tgfxBaseView as any).getSelectedLayerLocalCorner(oppositeCornerIdx);
+                        // 对角的本地索引：在本地坐标空间中，对角就是 (index + 2) % 4
+                        const oppositeLocalIdx = (localCornerIdx + 2) % 4;
+                        
+                        // 获取固定点（对角）的本地坐标
+                        const localCornerVector = (shareData.tgfxBaseView as any).getSelectedLayerLocalCorner(oppositeLocalIdx);
                         
                         if (localCornerVector && typeof localCornerVector.size === 'function' && localCornerVector.size() >= 2) {
                             const localX = localCornerVector.get(0);
@@ -1462,15 +1688,10 @@ export class GestureManager {
                                 const oppositeCenterX = worldCornerVector.get(0);
                                 const oppositeCenterY = worldCornerVector.get(1);
                                 
-                                // console.log(`[缩放-单选] 操作角索引${detectedIdx}，固定对角点索引${oppositeCornerIdx}，本地坐标：(${localX.toFixed(2)}, ${localY.toFixed(2)})，世界坐标：(${oppositeCenterX.toFixed(1)}, ${oppositeCenterY.toFixed(1)})`);
-                            
-                                // 取消高亮
-                                // console.log(`[高亮] 单选缩放开始 - 取消高亮`);
                                 shareData.tgfxBaseView?.resetHighlightLayer();
                                 
-                                // 传入检测到的索引（用户看到的视觉位置），用于翻转判断
-                                // 因为翻转判断应该基于用户的视觉感受：点击视觉左上角，鼠标往右下移动不应该翻转
-                                scaleStateManager.startScaling(worldCoords.worldX, worldCoords.worldY, oppositeCenterX, oppositeCenterY, detectedIdx, localX, localY, false);
+                                // 传入视觉索引 detectedIdx，用于翻转判断
+                                scaleStateManager.startScaling(worldCoords.worldX, worldCoords.worldY, oppositeCenterX, oppositeCenterY, detectedIdx, localX, localY, false, undefined, undefined, shareData);
                                 
                                 isMouseDown = true;
                                 hasMoved = false;
@@ -1483,31 +1704,19 @@ export class GestureManager {
                 }
             }
             
-            // 检测旋转操作 - 只有当光标是旋转类型时才进入旋转模式
+            // 检测旋转操作
             if (cursorType === 'rotate') {
-                // console.log('[旋转] 开始旋转操作');
-                
-                // 检测是否处于多选模式
                 const isMultiSelection = (shareData.tgfxBaseView as any).isInMultiSelectionMode && 
                                          (shareData.tgfxBaseView as any).isInMultiSelectionMode();
                 
                 if (isMultiSelection) {
-                    // ========== 多选模式的旋转逻辑 ==========
-                    // console.log(`[旋转-多选] 多选模式，使用AABB中心点`);
-                    
-                    // 多选模式：使用AABB的中心点作为旋转中心
                     const centerVector = (shareData.tgfxBaseView as any).getSelectedLayerCenter();
                     if (centerVector && typeof centerVector.size === 'function' && centerVector.size() >= 2) {
                         const centerX = centerVector.get(0);
                         const centerY = centerVector.get(1);
                         
-                        // console.log(`[旋转-多选] AABB中心点：(${centerX.toFixed(2)}, ${centerY.toFixed(2)})`);
-                        
-                        // 取消高亮
-                        // console.log(`[高亮] 多选旋转开始 - 取消高亮`);
                         shareData.tgfxBaseView?.resetHighlightLayer();
                         
-                        // 开始旋转，使用特殊的ID标识多选模式
                         rotationStateManager.startRotation(worldCoords.worldX, worldCoords.worldY, centerX, centerY, '__MULTI_SELECTION__');
                         rotationStateManager.setFallbackCenter(centerX, centerY);
                         
@@ -1521,28 +1730,19 @@ export class GestureManager {
                         return;
                     }
                 } else {
-                    // ========== 单选模式的旋转逻辑 ==========
-                    // 获取选中图层信息和指针地址作为唯一标识\n     
                     const layerInfo = (shareData.tgfxBaseView as any).getSelectedLayerInfo();
-                    let layerId = ''; // 图层唯一标识符
+                    let layerId = '';
                     if (layerInfo && layerInfo.size && layerInfo.size() >= 3) {
-                        const layerName = layerInfo.get(0);
-                        const layerType = layerInfo.get(1);
-                        layerId = layerInfo.get(2); // 获取图层指针地址作为ID
-                        // console.log(`[旋转-单选] 选中图层：${layerName} (${layerType}), ID: ${layerId}`);
+                        layerId = layerInfo.get(2);
                     }
                     
-                    // 获取并缓存中心点
                     const centerVector = (shareData.tgfxBaseView as any).getSelectedLayerCenter();
                     if (centerVector && typeof centerVector.size === 'function' && centerVector.size() >= 2) {
                         const centerX = centerVector.get(0);
                         const centerY = centerVector.get(1);
                         
-                        // 取消高亮
-                        // console.log(`[高亮] 多选旋转开始 - 取消高亮`);
                         shareData.tgfxBaseView?.resetHighlightLayer();
                         
-                        // 转换为世界坐标并开始旋转，传递图层ID
                         rotationStateManager.startRotation(worldCoords.worldX, worldCoords.worldY, centerX, centerY, layerId);
                         rotationStateManager.setFallbackCenter(centerX, centerY);
                         
@@ -1559,7 +1759,6 @@ export class GestureManager {
             }
 
             // 默认的选择和移动逻辑
-            // console.log(`[高亮] 默认选择逻辑 - 取消高亮`);
             shareData.tgfxBaseView?.resetHighlightLayer();
             
             const hasSelectedLayer = shareData.tgfxBaseView?.selectMoveLayer(worldCoords.worldX, worldCoords.worldY);
@@ -1570,10 +1769,8 @@ export class GestureManager {
                 lastPointY = clientXY.clientY;
                 isMouseDown = true;
                 hasMoved = false;
-                // console.log('[鼠标按下] 选中图层，不启动框选');
             } else {
                 // 未选中图层，点击空白区域，准备框选
-                // console.log('[鼠标按下] 点击空白区域，准备框选');
                 boxSelectionManager.onMouseDown(
                     clientXY.clientX, clientXY.clientY,
                     worldCoords.worldX, worldCoords.worldY
@@ -1593,26 +1790,6 @@ export class GestureManager {
         if (event.button === 0) { // 判断是否为左键
             // 如果正在缩放，结束缩放状态
             if (scaleStateManager.isInScaling()) {
-                // 输出缩放结束时的详细信息
-                const cornerIdx = scaleStateManager.getCornerIndex();
-                const cachedCenter = scaleStateManager.getCachedCenter();
-                
-                // 获取当前4个角的坐标
-                const cornersVector = (shareData.tgfxBaseView as any).getSelectedLayerCorners();
-                if (cornersVector && typeof cornersVector.size === 'function' && cornersVector.size() >= 8) {
-                    const corners: number[] = [];
-                    for (let i = 0; i < 8; i++) {
-                        corners.push(cornersVector.get(i));
-                    }
-                    
-                    // 使用基于坐标位置的角名称判断
-                    const actualCornerName = shareData.tgfxBaseView?.getCornerNameByPosition(cornerIdx) || '未知角';
-                    const currentCornerX = corners[cornerIdx * 2];
-                    const currentCornerY = corners[cornerIdx * 2 + 1];
-                    
-                    // 缩放结束信息已简化
-                }
-                
                 scaleStateManager.endScaling();
                 // 重置状态
                 isMouseDown = false;
@@ -1624,7 +1801,6 @@ export class GestureManager {
             
             // 如果正在旋转，结束旋转状态
             if (rotationStateManager.isInRotation()) {
-                // console.log(`[高亮] 旋转结束 - 重置状态`);
                 rotationStateManager.endRotation();
                 // 重置状态
                 isMouseDown = false;
@@ -1644,20 +1820,18 @@ export class GestureManager {
                 return;
             }
             
-            // ⚠️ 关键修复：无论是否框选，都要重置框选管理器状态
-            // 避免isPrepared状态残留导致下次点击误触发框选
+            // 重置框选管理器状态，避免isPrepared状态残留导致下次点击误触发框选
             boxSelectionManager.reset();
 
             if (!hasMoved) {
                 // 单击事件：调用选中方法
                 const clientXY = ConvertCoordinates(event, canvas);
                 const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
-
-                // console.log(`[JS调试] 单击坐标：(${worldCoords.worldX}, ${worldCoords.worldY})`);
-                const selected = shareData.tgfxBaseView?.selectLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
-                // console.log(`[JS调试] 选中结果：${selected}`);
+                shareData.tgfxBaseView?.selectLayerAndCheckRedraw(worldCoords.worldX, worldCoords.worldY);
             } else {
                 shareData.tgfxBaseView?.resetMoveLayers();
+                // 清除本地空间缓存（关键：移动改变了图层位置）
+                localSpaceInteraction.clearCache();
             }
 
             // 重置状态
@@ -1669,11 +1843,7 @@ export class GestureManager {
         }
     }
 
-    public onClick(event: MouseEvent, canvas: HTMLElement, shareData: ShareData) {
-        const clientXY = ConvertCoordinates(event, canvas);
-        const worldCoords = CoordinateTransformer.screenToWorld(clientXY.clientX, clientXY.clientY, shareData);
-
-        // console.log(`[高亮] 鼠标离开画布 - 取消高亮`);
+    public onClick(_event: MouseEvent, _canvas: HTMLElement, shareData: ShareData) {
         shareData.tgfxBaseView?.resetHighlightLayer();
         shareData.tgfxBaseView?.markDirty();
         animationLoop(shareData);

@@ -71,7 +71,6 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("isPointInRotateZone", &TGFXBaseView::isPointInRotateZone)
       .function("isPointInSelectedLayer", &TGFXBaseView::isPointInSelectedLayer)
       .function("isPointInSelectionBorder", &TGFXBaseView::isPointInSelectionBorder)
-      // 框选功能
       .function("startBoxSelection", &TGFXBaseView::startBoxSelection)
       .function("updateBoxSelection", &TGFXBaseView::updateBoxSelection)
       .function("endBoxSelection", &TGFXBaseView::endBoxSelection)
@@ -92,7 +91,9 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("getOppositeCornerWorldCoords", &TGFXBaseView::getOppositeCornerWorldCoords)
       .function("debugCornerAndOppositeInfo", &TGFXBaseView::debugCornerAndOppositeInfo)
       .function("getSelectedLayerFlipState", &TGFXBaseView::getSelectedLayerFlipState)
-      
+      .function("getLocalIndexByVisualCornerName", &TGFXBaseView::getLocalIndexByVisualCornerName)
+      .function("getSelectedLayerWorldMatrix", &TGFXBaseView::getSelectedLayerWorldMatrix)
+      .function("getSelectedLayerLocalBounds", &TGFXBaseView::getSelectedLayerLocalBounds)
       ;
 
   class_<TGFXThreadsView, base<TGFXBaseView>>("TGFXThreadsView")

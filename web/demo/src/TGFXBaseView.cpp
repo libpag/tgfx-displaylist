@@ -2351,6 +2351,70 @@ std::vector<float> TGFXBaseView::getSelectedLayerFlipState() {
   return result;
 }
 
+int TGFXBaseView::getLocalIndexByVisualCornerName(const std::string& visualCornerName) {
+  if (!selectedTargetLayer) {
+    return -1;
+  }
+  
+  // 获取全局变换矩阵
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  // 获取所有角的世界坐标
+  const auto localBounds = selectedTargetLayer->getBounds(nullptr, true);
+  std::vector<tgfx::Point> corners = {
+    tgfx::Point::Make(localBounds.left, localBounds.top),    // 0: 本地左上
+    tgfx::Point::Make(localBounds.right, localBounds.top),   // 1: 本地右上
+    tgfx::Point::Make(localBounds.right, localBounds.bottom), // 2: 本地右下
+    tgfx::Point::Make(localBounds.left, localBounds.bottom),  // 3: 本地左下
+  };
+  
+  // 转换所有角到世界坐标
+  std::vector<tgfx::Point> worldCorners(4);
+  for (size_t i = 0; i < 4; ++i) {
+    globalMatrix.mapXY(corners[i].x, corners[i].y, &worldCorners[i]);
+  }
+  
+  // 找到最左、最右、最上、最下的坐标值
+  float minX = worldCorners[0].x, maxX = worldCorners[0].x;
+  float minY = worldCorners[0].y, maxY = worldCorners[0].y;
+  
+  for (size_t i = 1; i < 4; ++i) {
+    minX = std::min(minX, worldCorners[i].x);
+    maxX = std::max(maxX, worldCorners[i].x);
+    minY = std::min(minY, worldCorners[i].y);
+    maxY = std::max(maxY, worldCorners[i].y);
+  }
+  
+  // 遍历所有本地索引，找到视觉位置匹配的那个
+  for (size_t i = 0; i < 4; ++i) {
+    const auto& worldCorner = worldCorners[i];
+    
+    // 判断这个本地索引对应的世界坐标在哪个视觉位置
+    bool isLeft = std::abs(worldCorner.x - minX) < std::abs(worldCorner.x - maxX);
+    bool isTop = std::abs(worldCorner.y - minY) < std::abs(worldCorner.y - maxY);
+    
+    std::string currentVisualName;
+    if (isLeft && isTop) {
+      currentVisualName = "左上角";
+    } else if (!isLeft && isTop) {
+      currentVisualName = "右上角";
+    } else if (!isLeft && !isTop) {
+      currentVisualName = "右下角";
+    } else {
+      currentVisualName = "左下角";
+    }
+    
+    // 如果视觉名称匹配，返回这个本地索引
+    if (currentVisualName == visualCornerName) {
+      printf("[视觉角映射] 视觉'%s' -> 本地索引%zu\n", visualCornerName.c_str(), i);
+      return static_cast<int>(i);
+    }
+  }
+  
+  printf("[视觉角映射] 警告：未找到视觉角'%s'对应的本地索引\n", visualCornerName.c_str());
+  return -1;
+}
+
 void TGFXBaseView::debugCornerAndOppositeInfo() {
   if (!selectedTargetLayer) {
     printf("[调试] 没有选中的图层\n");
@@ -3643,6 +3707,58 @@ int TGFXBaseView::getSelectedLayersCount() const {
 
 bool TGFXBaseView::isInMultiSelectionMode() const {
   return isMultiSelection;
+}
+
+// ========== 新架构：本地空间交互支持 ==========
+/**
+ * 获取选中图层的世界变换矩阵
+ * 返回: 6 个浮点数 [a, b, c, d, e, f]
+ * 矩阵格式：x' = a*x + c*y + e, y' = b*x + d*y + f
+ */
+std::vector<float> TGFXBaseView::getSelectedLayerWorldMatrix() {
+  std::vector<float> result;
+  
+  if (!selectedTargetLayer) {
+    return result;
+  }
+  
+  // 获取图层的全局变换矩阵
+  auto globalMatrix = CoordinateTransformer::getLayerToRootMatrix(selectedTargetLayer);
+  
+  // 提取矩阵的 6 个分量
+  // 矩阵格式: a c e
+  //           b d f
+  //           0 0 1
+  result.push_back(globalMatrix.getScaleX());  // a
+  result.push_back(globalMatrix.getSkewY());   // b
+  result.push_back(globalMatrix.getSkewX());   // c
+  result.push_back(globalMatrix.getScaleY());  // d
+  result.push_back(globalMatrix.getTranslateX());  // e
+  result.push_back(globalMatrix.getTranslateY());  // f
+  
+  return result;
+}
+
+/**
+ * 获取选中图层的本地边界
+ * 返回: [left, top, right, bottom]
+ */
+std::vector<float> TGFXBaseView::getSelectedLayerLocalBounds() {
+  std::vector<float> result;
+  
+  if (!selectedTargetLayer) {
+    return result;
+  }
+  
+  // 获取图层的本地边界
+  auto bounds = selectedTargetLayer->getBounds();
+  
+  result.push_back(bounds.left);
+  result.push_back(bounds.top);
+  result.push_back(bounds.right);
+  result.push_back(bounds.bottom);
+  
+  return result;
 }
 
 }  // namespace displaylist
