@@ -2993,8 +2993,6 @@ bool TGFXBaseView::isPointOnControlLayerBorder(float x, float y, std::shared_ptr
 // ========== 框选功能实现 ==========
 
 void TGFXBaseView::startBoxSelection(float worldX, float worldY) {
-  printf("[框选] 开始框选: (%.2f, %.2f)\n", worldX, worldY);
-  
   isBoxSelecting = true;
   boxSelectStart = tgfx::Point::Make(worldX, worldY);
   boxSelectEnd = boxSelectStart;
@@ -3068,8 +3066,6 @@ void TGFXBaseView::updateBoxSelection(float worldX, float worldY) {
 void TGFXBaseView::endBoxSelection() {
   if (!isBoxSelecting) return;
   
-  printf("[框选] 结束框选\n");
-  
   // 计算最终选择矩形
   float left = std::min(boxSelectStart.x, boxSelectEnd.x);
   float top = std::min(boxSelectStart.y, boxSelectEnd.y);
@@ -3081,39 +3077,30 @@ void TGFXBaseView::endBoxSelection() {
   selectedLayers = getLayersInRect(rect);
   
   // 清理框选框和临时高亮
-  printf("[框选] 清理框选框: selectionBoxLayer=%p\n", (void*)selectionBoxLayer.get());
   if (selectionBoxLayer) {
     if (selectionBoxLayer->parent()) {
-      printf("[框选]   移除框选框图层从父节点\n");
       selectionBoxLayer->removeFromParent();
     }
     selectionBoxLayer.reset();
-    printf("[框选]   框选框已重置\n");
   }
   
-  printf("[框选] 清理临时高亮: count=%zu\n", tempHighlightLayers.size());
   for (auto& highlight : tempHighlightLayers) {
     if (highlight && highlight->parent()) {
       highlight->removeFromParent();
     }
   }
   tempHighlightLayers.clear();
-  printf("[框选] 临时高亮已清理\n");
   
   isBoxSelecting = false;
   
   // 如果选中了0个图层，直接返回
   if (selectedLayers.empty()) {
-    printf("[框选] 未选中任何图层\n");
     appHost->markDirty();
     return;
   }
   
-  printf("[框选] 选中 %zu 个图层\n", selectedLayers.size());
-  
   // 如果只选中1个图层，转为单选模式
   if (selectedLayers.size() == 1) {
-    printf("[框选] 只选中1个图层，转为单选模式\n");
     auto layer = selectedLayers[0];
     selectedLayers.clear();
     isMultiSelection = false;
@@ -3172,6 +3159,14 @@ void TGFXBaseView::endBoxSelection() {
   createMultiSelectionBorder();
   
   appHost->markDirty();
+}
+
+void TGFXBaseView::endBoxSelectionWithZoom(float currentZoom) {
+  // 更新 lastZoom 确保后续线宽计算正确
+  if (currentZoom > 0) {
+    lastZoom = currentZoom;
+  }
+  endBoxSelection();
 }
 
 // 获取矩形内的所有图层（递归搜索所有图层，排除父子关系）
@@ -3245,11 +3240,6 @@ std::vector<std::shared_ptr<tgfx::Layer>> TGFXBaseView::getLayersInRect(const tg
     if (parentSet.find(layer.get()) == parentSet.end()) {
       result.push_back(layer);
     }
-  }
-  
-  printf("[框选] 检测到 %zu 个候选图层，过滤后剩余 %zu 个顶层图层\n", candidates.size(), result.size());
-  for (auto& layer : result) {
-    printf("[框选] 选中图层: '%s' (地址:%p)\n", layer->name().c_str(), (void*)layer.get());
   }
   
   return result;
@@ -3344,10 +3334,9 @@ void TGFXBaseView::createMultiSelectionBorder() {
     tgfx::SolidColor::Make(tgfx::Color::FromRGBA(130, 182, 41, 204))
   );
   
-  // 【修复】线宽自适应 - 参考单选逻辑，考虑选中图层的平均缩放
-  float layerAvgScale = calculateMultiSelectionAverageScale();
-  float totalScale = layerAvgScale * lastZoom;
-  float adjustedLineWidth = totalScale > 0 ? s_highlightLineWidth / totalScale : s_highlightLineWidth;
+  // 【修复】多选边框使用世界坐标系绘制（Matrix::I()），不需要考虑图层缩放，只考虑全局缩放
+  // 这与单选不同：单选边框跟随图层变换，所以需要考虑图层缩放
+  float adjustedLineWidth = lastZoom > 0 ? s_highlightLineWidth / lastZoom : s_highlightLineWidth;
   selectionBorder->setLineWidth(adjustedLineWidth);
   selectionBorder->setStrokeAlign(tgfx::StrokeAlign::Inside);
   selectionBorder->setName("__MULTI_SELECTION_BORDER__");  // 使用独立的名称，避免被高亮检测

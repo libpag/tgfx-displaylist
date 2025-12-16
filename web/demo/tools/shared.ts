@@ -31,8 +31,7 @@ export const InteractionConfig = {
     ROTATION_ZONE_TOLERANCE_PIXELS: 80,   // 旋转区域最大距离（屏幕像素）
     
     // 框选相关
-    BOX_SELECTION_MIN_DRAG: 20,           // 框选最小拖动距离（像素）
-    BOX_SELECTION_MIN_PRESS: 300,         // 框选最小按压时间（毫秒）
+    BOX_SELECTION_MIN_DRAG: 5,            // 框选最小拖动距离（像素）
     
     // 缩放变化阈值
     SCALE_CHANGE_THRESHOLD: 0.0001,       // 缩放变化检测阈值

@@ -53,7 +53,6 @@ export class SelectTool implements ITool {
     private boxSelectStartScreenY = 0;
     private boxSelectStartWorldX = 0;
     private boxSelectStartWorldY = 0;
-    private pressStartTime = 0;
 
     onMouseDown(event: MouseEventData, canvas: HTMLElement, shareData: ShareData): boolean {
         if (event.button !== 0) return false;
@@ -78,7 +77,6 @@ export class SelectTool implements ITool {
             this.boxSelectStartScreenY = event.screenY;
             this.boxSelectStartWorldX = event.worldX;
             this.boxSelectStartWorldY = event.worldY;
-            this.pressStartTime = Date.now();
             this.lastScreenX = event.screenX;
             this.lastScreenY = event.screenY;
             this.hasMoved = false;
@@ -113,13 +111,12 @@ export class SelectTool implements ITool {
 
         if (this.state === SelectToolState.PREPARED) {
             // 检查是否应该启动框选
+            // 只有拖动距离达到阈值才启动框选，避免点击空白时误触发
             const dx = event.screenX - this.boxSelectStartScreenX;
             const dy = event.screenY - this.boxSelectStartScreenY;
             const distance = Math.sqrt(dx * dx + dy * dy);
-            const pressDuration = Date.now() - this.pressStartTime;
 
-            if (distance > InteractionConfig.BOX_SELECTION_MIN_DRAG || 
-                pressDuration > InteractionConfig.BOX_SELECTION_MIN_PRESS) {
+            if (distance > InteractionConfig.BOX_SELECTION_MIN_DRAG) {
                 // 启动框选
                 this.state = SelectToolState.BOX_SELECTING;
                 (shareData.tgfxBaseView as any).resetSelectedLayer();
@@ -146,8 +143,10 @@ export class SelectTool implements ITool {
         }
 
         if (this.state === SelectToolState.BOX_SELECTING) {
-            // 结束框选
-            (shareData.tgfxBaseView as any).endBoxSelection();
+            // 结束框选，传入当前 zoom 值确保线宽计算正确
+            (shareData.tgfxBaseView as any).endBoxSelectionWithZoom(
+                shareData.zoom
+            );
         } else if (this.state === SelectToolState.MOVING) {
             if (!this.hasMoved) {
                 // 单击事件：重新选中
@@ -157,8 +156,8 @@ export class SelectTool implements ITool {
                 shareData.tgfxBaseView?.resetMoveLayers();
             }
         } else if (this.state === SelectToolState.PREPARED) {
-            // 准备状态下抬起，视为单击空白区域
-            // 不做特殊处理
+            // 准备状态下抬起，视为单击空白区域，清除选中状态
+            (shareData.tgfxBaseView as any).resetSelectedLayer();
         }
 
         this.reset();

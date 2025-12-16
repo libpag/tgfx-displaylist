@@ -197,6 +197,7 @@ class TGFXBaseView {
   void startBoxSelection(float worldX, float worldY);
   void updateBoxSelection(float worldX, float worldY);
   void endBoxSelection();
+  void endBoxSelectionWithZoom(float currentZoom);  // 带 zoom 参数的版本，确保线宽正确
   
   // 多选操作
   void moveMultiSelection(float deltaX, float deltaY);

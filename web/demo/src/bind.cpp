@@ -74,6 +74,7 @@ EMSCRIPTEN_BINDINGS(TGFXDemo) {
       .function("startBoxSelection", &TGFXBaseView::startBoxSelection)
       .function("updateBoxSelection", &TGFXBaseView::updateBoxSelection)
       .function("endBoxSelection", &TGFXBaseView::endBoxSelection)
+      .function("endBoxSelectionWithZoom", &TGFXBaseView::endBoxSelectionWithZoom)
       .function("moveMultiSelection", &TGFXBaseView::moveMultiSelection)
       .function("rotateMultiSelection", &TGFXBaseView::rotateMultiSelection)
       .function("scaleMultiSelection", &TGFXBaseView::scaleMultiSelection)
